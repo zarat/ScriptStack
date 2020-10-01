@@ -1,3 +1,5 @@
+Now available via [nuget.org](https://www.nuget.org/packages/ScriptStack/)
+
 ### What is ScriptStack? 
 
 A customizable scripting language you can embed in your new or existing project, unity game or as standalone interpreter. It is designed to be both easy to use and easy to integrate while being as flexible as possible.
