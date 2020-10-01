@@ -1,6 +1,6 @@
 ### What is ScriptStack? 
 
-A customizable scripting language you can embed in your new or existing project, unity game or as standalone interpreter using its [API](https://zvm.lima-city.at/annotated.html). It is designed to be both easy to use and easy to integrate while being as flexible as possible.
+A customizable scripting language you can embed in your new or existing project, unity game or as standalone interpreter. It is designed to be both easy to use and easy to integrate while being as flexible as possible.
 
 ```CSharp
 Manager manager = new Manager();
