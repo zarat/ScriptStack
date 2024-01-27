@@ -4,7 +4,13 @@ A managed .NET scripting language. Get it on [nuget.org](https://www.nuget.org/p
 
 # Examples
 
-Writing a host application.
+Writing a host application requires to implement the <code>Host</code> interface and the method <code>Invoke</code> with this signature.
+
+```
+public object Invoke(string functionName, List<object> parameters)
+````
+
+Here is a full example.
 
 ```CSharp
 using ScriptStack;
@@ -36,10 +42,10 @@ class ScriptStack : Host
  
     }
  
-    public object Invoke(string routine, List<object> parameters)
+    public object Invoke(string functionName, List<object> parameters)
     {
  
-        if (routine == "print")
+        if (functionName == "print")
         {
             // do some stuff..
         }
@@ -51,7 +57,19 @@ class ScriptStack : Host
 }
 ```
 
-Writing a plugin.
+Writing a model (plugin) requires to implement the <code>Model</code> interface and the method <code>Invoke</code> with this signature.
+
+```
+public object Invoke(string functionName, List<object> parameters)
+```
+
+In addition it must expose a <code>List\<Routine\></code> of all the (script) functions it implements.
+
+```
+public ReadOnlyCollection<Routine> Routines
+```
+
+Here is a full example.
 
 ```CSharp
 using System;
