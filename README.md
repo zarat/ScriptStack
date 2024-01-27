@@ -1,6 +1,6 @@
 # ScriptStack
 
-Auch via [nuget.org](https://www.nuget.org/packages/ScriptStack/).
+A managed .NET scripting language. Get it on [nuget.org](https://www.nuget.org/packages/ScriptStack/).
 
 # Examples
 
