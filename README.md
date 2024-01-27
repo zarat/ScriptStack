@@ -7,6 +7,10 @@ A managed .NET scripting language. Get it on [nuget.org](https://www.nuget.org/p
 Writing a host application.
 
 ```CSharp
+using ScriptStack;
+using ScriptStack.Compiler;
+using ScriptStack.Runtime;
+
 class ScriptStack : Host
 {
  
@@ -55,6 +59,8 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
  
 using ScriptStack;
+using ScriptStack.Compiler;
+using ScriptStack.Runtime;
  
 namespace DemoModel
 {
