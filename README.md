@@ -16,44 +16,50 @@ Here is a full example.
 using ScriptStack;
 using ScriptStack.Compiler;
 using ScriptStack.Runtime;
+using System.Collections.Generic;
+using System;
 
-class ScriptStack : Host
+namespace StackShell
 {
- 
-    private Manager manager;
-    private Script script;
-    private Interpreter interpreter;
- 
-    public ScriptStack(String[] args)
+    class StackShell : Host
     {
-    
-        manager = new Manager();
- 
-        manager.Register(new Routine((Type)null, "print", (Type)null));
- 
-        script = new Script(manager, args[0]);
- 
-        interpreter = new Interpreter(script);
-                      
-        interpreter.Handler = this;
- 
-        while (!interpreter.Finished)
-            interpreter.Interpret(1);
- 
-    }
- 
-    public object Invoke(string functionName, List<object> parameters)
-    {
- 
-        if (functionName == "print")
+
+        private static Manager manager;
+        private static Script script;
+        private static Interpreter interpreter;
+
+        public static void Main(String[] args)
         {
-            // do some stuff..
+
+            manager = new Manager();
+
+            manager.Register(new Routine((Type)null, "print", (Type)null));
+
+            script = new Script(manager, args[0]);
+
+            interpreter = new Interpreter(script);
+
+            interpreter.Handler = new StackShell();
+
+            while (!interpreter.Finished)
+                interpreter.Interpret(1);
+
         }
- 
-        return null;
- 
+
+        public object Invoke(string functionName, List<object> parameters)
+        {
+
+            if (functionName == "print")
+            {
+                System.Console.WriteLine(parameters[0]);
+            }
+
+            return null;
+
+        }
+
     }
- 
+
 }
 ```
 
