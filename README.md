@@ -139,3 +139,5 @@ namespace DemoModel
  
 }
 ```
+
+Mit manager.LoadComponent(dll) oder manager.LoadComponents(directory) kann man Models laden.
