@@ -1,6 +1,6 @@
 # ScriptStack
 
-A managed .NET scripting language. Get it on [nuget.org](https://www.nuget.org/packages/ScriptStack/).
+A managed .NET scripting language to integrate into games (Unity3d, Godot) or any other application.
 
 # Examples
 
