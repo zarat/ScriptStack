@@ -1,6 +1,6 @@
 # ScriptStack
 
-A managed .NET scripting language to integrate into games (Unity3d, Godot) or any other application.
+A managed .NET scripting language to integrate into games (Unity3d, Godot) or any other application. See also [Debugger IDE](https://github.com/zarat/debugger)
 
 # Examples
 
