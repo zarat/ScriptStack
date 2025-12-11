@@ -33,6 +33,8 @@ namespace StackShell
 
             manager = new Manager();
 
+            manager.LoadComponents(".\Plugins");
+
             manager.Register(new Routine((Type)null, "print", (Type)null));
 
             script = new Script(manager, args[0]);
