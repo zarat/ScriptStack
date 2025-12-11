@@ -83,9 +83,19 @@ namespace ScriptStack.Compiler
         Notify,
     }
 
+     public class SerializableToken
+     {
+         public TokenType Type { get; set; }
+         public string Lexeme { get; set; }
+         public int Line { get; set; }
+         public int Column { get; set; }
+         public string Text { get; set; }
+     }
+
     /// <summary>
     /// A lexical token or simply token is a string with an assigned and thus identified meaning. 
     /// </summary>
+    [Serializable]
     public class Token
     {
 
@@ -149,3 +159,4 @@ namespace ScriptStack.Compiler
     }
 
 }
+
