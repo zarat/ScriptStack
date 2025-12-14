@@ -1,30 +1,32 @@
 using System;
-using System.Collections.Generic;
-using System.Text;
+using System.Runtime.CompilerServices;
 
 namespace ScriptStack.Runtime
 {
-
-    public class ExecutionException
-        : ScriptStackException
+    public class ExecutionException : ScriptStackException
     {
-        #region Public Methods
-
         public ExecutionException()
             : base()
         {
         }
 
-        public ExecutionException(String strMessage)
-            : base(strMessage)
+        public ExecutionException(
+            string strMessage,
+            [CallerMemberName] string caller = "",
+            [CallerFilePath] string file = "",
+            [CallerLineNumber] int line = 0)
+            : base($"{strMessage} (Caller: {caller}, {System.IO.Path.GetFileName(file)}:{line})")
         {
         }
 
-        public ExecutionException(String strMessage, Exception exceptionInner)
-            : base(strMessage, exceptionInner)
+        public ExecutionException(
+            string strMessage,
+            Exception exceptionInner,
+            [CallerMemberName] string caller = "",
+            [CallerFilePath] string file = "",
+            [CallerLineNumber] int line = 0)
+            : base($"{strMessage} (Caller: {caller}, {System.IO.Path.GetFileName(file)}:{line})", exceptionInner)
         {
         }
-
-        #endregion
     }
 }
