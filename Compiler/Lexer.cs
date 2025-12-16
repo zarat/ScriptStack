@@ -290,6 +290,12 @@ namespace ScriptStack.Compiler
                             tokenStream.Add(new Token(TokenType.AssignBinaryNot, "~=", line, column, currentLine));
                             state = State.None;
                         }
+                        else
+                        {
+                            tokenStream.Add(new Token(TokenType.BinaryNot, "~", line, column, currentLine));
+                            UndoChar();
+                            state = State.None;
+                        }
                         break;
 
                     case State.Divide:
@@ -809,4 +815,3 @@ namespace ScriptStack.Compiler
     }
 
 }
-
