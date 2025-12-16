@@ -1187,29 +1187,18 @@ namespace ScriptStack.Runtime
 
         private void NOTB()
         {
-            
-            string identifier = null;
 
-            object val = Evaluate(instruction.Second);
+            if (instruction.First.Type != OperandType.Variable)
+                throw new ExecutionException("Operand type '" + instruction.First.Type + "' not supported by NOTB instruction.");
 
-            Operand operand = instruction.First;
+            string dest = (string)instruction.First.Value;
 
-            switch (operand.Type)
-            {
+            object srcObj = Evaluate(instruction.Second);
 
-                case OperandType.Variable:
-                    var res = ~(int)val;
+            // (aktuell unterstützt dein Interpreter bei BitOps sowieso int)
+            int src = (int)srcObj;
 
-                    identifier = operand.Value.ToString();
-
-                    localMemory[identifier] = res;
-
-                    break;
-
-                default:
-                    throw new ExecutionException("Der Typ '" + operand.Type + "' kann an dieser Stelle nicht verarbeitet werden.");
-
-            }
+            localMemory[dest] = ~src;
 
         }
 
