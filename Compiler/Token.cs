@@ -70,6 +70,7 @@ namespace ScriptStack.Compiler
         String,
         Char,
         Double,
+        Decimal,
         ShiftLeft,
         ShiftRight,
         CustomObject,
@@ -159,4 +160,5 @@ namespace ScriptStack.Compiler
     }
 
 }
+
 
