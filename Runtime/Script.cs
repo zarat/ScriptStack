@@ -228,7 +228,8 @@ namespace ScriptStack.Runtime
 
                 Scan(scriptName);
 
-                Lexer lexer = new Lexer(sourceCode);
+                //Lexer lexer = new Lexer(sourceCode);
+                Lexer lexer = manager.LexerFactory(sourceCode);
 
                 List<Token> tokenStream = lexer.GetTokens();
 
@@ -474,4 +475,5 @@ namespace ScriptStack.Runtime
 
     }
 }
+
 
