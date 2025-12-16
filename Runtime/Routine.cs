@@ -91,6 +91,7 @@ namespace ScriptStack.Runtime
                 && type != typeof(float)
                 && type != typeof(bool)
                 && type != typeof(double)
+                && type != typeof(decimal)
                 && type != typeof(string)
                 && type != typeof(char)
                 && type != typeof(ArrayList)
@@ -329,3 +330,4 @@ namespace ScriptStack.Runtime
     }
 
 }
+
