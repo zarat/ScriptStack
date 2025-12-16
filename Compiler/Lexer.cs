@@ -44,6 +44,8 @@ namespace ScriptStack.Compiler
             EscapeString,
             Number,
             Float,
+            Double,
+            Decimal,
             Hex,
             Bin,
             Oct,
@@ -678,7 +680,7 @@ namespace ScriptStack.Compiler
                         else if (ch == '.') // culture?!?
                         {
                             lexeme += '.';
-                            state = State.Float;
+                            state = State.Decimal; // only float when "0.0f" like in C. double like "0.0d".
                         }
                         else if (ch == 'x')
                         {
@@ -714,6 +716,36 @@ namespace ScriptStack.Compiler
                         {
                             float floatValue = float.Parse(lexeme, System.Globalization.CultureInfo.InvariantCulture);
                             tokenStream.Add(new Token(TokenType.Float, floatValue, line, column, currentLine));
+                            UndoChar();
+                            state = State.None;
+                        }
+                        break;
+
+                    case State.Double:
+                        if (char.IsDigit(ch))
+                            lexeme += ch;
+                        else if (ch == 'f')
+                            state = State.Float;
+                        else
+                        {
+                            double doubleValue = double.Parse(lexeme, System.Globalization.CultureInfo.InvariantCulture);
+                            tokenStream.Add(new Token(TokenType.Double, doubleValue, line, column, currentLine));
+                            UndoChar();
+                            state = State.None;
+                        }
+                        break;
+
+                    case State.Decimal:
+                        if (char.IsDigit(ch))
+                            lexeme += ch;
+                        else if (ch == 'f')
+                            state = State.Float;
+                        else if (ch == 'd')
+                            state = State.Double;
+                        else
+                        {
+                            decimal decimalValue = decimal.Parse(lexeme, System.Globalization.CultureInfo.InvariantCulture);
+                            tokenStream.Add(new Token(TokenType.Decimal, decimalValue, line, column, currentLine));
                             UndoChar();
                             state = State.None;
                         }
