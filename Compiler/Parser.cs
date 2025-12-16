@@ -265,6 +265,8 @@ namespace ScriptStack.Compiler
                     return typeof(int);
                 case TokenType.Float:
                     return typeof(float);
+                case TokenType.Double:
+                    return typeof(double);
                 case TokenType.Boolean:
                     return typeof(bool);
                 case TokenType.String:
@@ -1292,6 +1294,7 @@ namespace ScriptStack.Compiler
 
                 case TokenType.Integer:
                 case TokenType.Float:
+                case TokenType.Double:
                 case TokenType.Boolean:
                 case TokenType.String:
                 case TokenType.Char:
@@ -3112,3 +3115,4 @@ namespace ScriptStack.Compiler
     }
 
 }
+
