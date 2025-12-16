@@ -749,8 +749,6 @@ namespace ScriptStack.Compiler
                     case State.Double:
                         if (char.IsDigit(ch))
                             lexeme += ch;
-                        else if (ch == 'f')
-                            state = State.Float;
                         else
                         {
                             double doubleValue = double.Parse(lexeme, System.Globalization.CultureInfo.InvariantCulture);
@@ -811,3 +809,4 @@ namespace ScriptStack.Compiler
     }
 
 }
+
