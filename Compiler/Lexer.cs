@@ -55,6 +55,19 @@ namespace ScriptStack.Compiler
 
         #endregion
 
+        #region public variables
+
+        public enum DefaultRealType
+        {
+            Decimal,
+            Double,
+            Float
+        }
+
+        public DefaultRealType DefaultReal { get; set; } = DefaultRealType.Decimal;
+
+        #endregion
+
         #region Private Variables
 
         private List<string> lines;
@@ -680,7 +693,19 @@ namespace ScriptStack.Compiler
                         else if (ch == '.') // culture?!?
                         {
                             lexeme += '.';
-                            state = State.Decimal; // only float when "0.0f" like in C. double like "0.0d".
+                            switch (DefaultReal)
+                            {
+                                case DefaultRealType.Float:
+                                    state = State.Float;
+                                    break;
+                                case DefaultRealType.Double:
+                                    state = State.Double;
+                                    break;
+                                case DefaultRealType.Decimal:
+                                default:
+                                    state = State.Decimal;
+                                    break;
+                            }
                         }
                         else if (ch == 'x')
                         {
