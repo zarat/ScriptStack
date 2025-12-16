@@ -62,6 +62,8 @@ namespace ScriptStack
 
         }
 
+        public Func<List<string>, Lexer> LexerFactory { get; set; } = lines => new Lexer(lines);
+
         public void LoadComponents(string relativeDirectoryPath)
         {
 
@@ -267,3 +269,4 @@ namespace ScriptStack
     }
 
 }
+
