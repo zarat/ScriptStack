@@ -251,6 +251,9 @@ namespace ScriptStack.Runtime
         }
 
         /// <summary>
+        /// Ausführung arithmetischer Operationen
+        /// 
+        /// dest = dest OP source
         /// 
         /// Special rules for strings and arrays
         /// </summary>
@@ -258,8 +261,10 @@ namespace ScriptStack.Runtime
         {
 
             String strIdentifierDest = (String)instruction.First.Value;
+
             object objectValueDest = Evaluate(instruction.First);
             object objectValueSource = Evaluate(instruction.Second);
+
             Type typeDest = objectValueDest.GetType();
             Type typeSource = objectValueSource.GetType();
 
@@ -295,14 +300,25 @@ namespace ScriptStack.Runtime
                 }
             }
 
+            /*
             float fValueDest = 0.0f;
             float fValueSource = 0.0f;
             float fResult = 0.0f;
+            */
+
+            /*
+            var fValueDest = 0.0;
+            var fValueSource = 0.0;
+            var fResult = 0.0;
 
             if (typeDest == typeof(int))
                 fValueDest = (float)(int)objectValueDest;
             else if (typeDest == typeof(float))
                 fValueDest = (float)objectValueDest;
+            else if (typeDest == typeof(double))
+                fValueDest = (double)objectValueDest;
+            else if (typeDest == typeof(decimal))
+                fValueDest = (decimal)objectValueDest;
             else
                 throw new ScriptStackException("Values of type '" + typeDest.Name + "' cannot be used in arithmetic instructions.");
 
@@ -310,6 +326,10 @@ namespace ScriptStack.Runtime
                 fValueSource = (float)(int)objectValueSource;
             else if (typeSource == typeof(float))
                 fValueSource = (float)objectValueSource;
+            else if (typeSource == typeof(float))
+                fValueSource = (double)objectValueSource;
+            else if (typeSource == typeof(decimal))
+                fValueSource = (decimal)objectValueSource;
             else
                 throw new ScriptStackException("Values of type '" + typeSource.Name + "' cannot be used in arithmetic instructions.");
 
@@ -326,12 +346,90 @@ namespace ScriptStack.Runtime
 
             if (typeDest == typeof(int) && typeSource == typeof(int))
                 Assignment(instruction.First, (int)fResult);
+            else if (typeDest == typeof(float) && typeSource == typeof(float))
+                Assignment(instruction.First, (float)fResult);
+            else if (typeDest == typeof(double) && typeSource == typeof(double))
+                Assignment(instruction.First, (double)fResult);
             else
-                Assignment(instruction.First, fResult);
+                Assignment(instruction.First, (decimal)fResult);
+            */
+
+            /*
+            decimal a = ToDecimal(objectValueDest, typeDest);
+            decimal b = ToDecimal(objectValueSource, typeSource);
+
+            decimal r = instruction.OpCode switch
+            {
+                OpCode.ADD => a + b,
+                OpCode.SUB => a - b,
+                OpCode.MUL => a * b,
+                OpCode.DIV => a / b,
+                OpCode.MOD => a % b,
+                _ => throw new ExecutionException($"Invalid arithmetic instruction '{instruction.OpCode}'.")
+            };
+
+            // Ergebnis in den Zieltyp (dest) zurück
+            if (typeDest == typeof(int)) Assignment(instruction.First, (int)r);
+            else if (typeDest == typeof(float)) Assignment(instruction.First, (float)r);
+            else if (typeDest == typeof(double)) Assignment(instruction.First, (double)r);
+            else if (typeDest == typeof(decimal)) Assignment(instruction.First, r);
+            else throw new ScriptStackException($"Values of type '{typeDest.Name}' cannot be used in arithmetic instructions.");
+            */
+
+            decimal valueDest;
+            decimal valueSource;
+            decimal result;
+
+            // DEST -> decimal
+            switch (Type.GetTypeCode(typeDest))
+            {
+                case TypeCode.Int32: valueDest = (int)objectValueDest; break;
+                case TypeCode.Single: valueDest = (decimal)(float)objectValueDest; break;
+                case TypeCode.Double: valueDest = (decimal)(double)objectValueDest; break;
+                case TypeCode.Decimal: valueDest = (decimal)objectValueDest; break;
+                default:
+                    throw new ScriptStackException("Values of type '" + typeDest.Name + "' cannot be used as destination in arithmetic instructions.");
+            }
+
+            // SOURCE -> decimal
+            switch (Type.GetTypeCode(typeSource))
+            {
+                case TypeCode.Int32: valueSource = (int)objectValueSource; break;
+                case TypeCode.Single: valueSource = (decimal)(float)objectValueSource; break;
+                case TypeCode.Double: valueSource = (decimal)(double)objectValueSource; break;
+                case TypeCode.Decimal: valueSource = (decimal)objectValueSource; break;
+                default:
+                    throw new ScriptStackException("Values of type '" + typeSource.Name + "' cannot be used as source in arithmetic instructions.");
+            }
+
+            // Arithmetic (decimal)
+            switch (instruction.OpCode)
+            {
+                case OpCode.ADD: result = valueDest + valueSource; break;
+                case OpCode.SUB: result = valueDest - valueSource; break;
+                case OpCode.MUL: result = valueDest * valueSource; break;
+                case OpCode.DIV: result = valueDest / valueSource; break;
+                case OpCode.MOD: result = valueDest % valueSource; break;
+                default:
+                    throw new ExecutionException("Invalid arithmetic instruction '" + instruction.OpCode + "'.");
+            }
+
+            // Back to DEST type
+            switch (Type.GetTypeCode(typeDest))
+            {
+                case TypeCode.Int32: Assignment(instruction.First, (int)result); break;
+                case TypeCode.Single: Assignment(instruction.First, (float)result); break;
+                case TypeCode.Double: Assignment(instruction.First, (double)result); break;
+                case TypeCode.Decimal: Assignment(instruction.First, result); break;
+                default:
+                    // eigentlich schon oben abgefangen, aber zur Sicherheit:
+                    throw new ScriptStackException("Values of type '" + typeDest.Name + "' cannot be used in arithmetic instructions.");
+            }
 
         }
 
         /// <summary>
+        /// Ausführung einer Vergleichsoperation
         /// 
         /// If one of both is of type 'null' only certain operations are allowed.
         /// 
