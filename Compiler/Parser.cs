@@ -1568,12 +1568,36 @@ namespace ScriptStack.Compiler
         private Variable Factor()
         {
 
+
             if (LookAhead().Type == TokenType.LeftBrace)
                 return BraceArray();
 
             // test
             if (LookAhead().Type == TokenType.LeftBracket)
                 return BracketArray();
+
+            // unary bitwise NOT: "~x"
+            if (LookAhead().Type == TokenType.BinaryNot)
+            {
+                ReadToken(); // "~"
+
+                // binds tight and is right-associative: "~~x" etc.
+                Variable right = Factor();
+
+                string tmp = AllocateTemporaryVariable();
+
+                executable.InstructionsInternal.Add(new Instruction(
+                    OpCode.NOTB,
+                    Operand.Variable(tmp),
+                    Operand.Variable(right.name)
+                ));
+
+                // type: same as right, but practically int for bitwise
+                Variable result = new Variable(tmp, Scope.Local, typeof(int));
+                result.derivatedType = typeof(int);
+
+                return result;
+            }
 
             Variable variable = Atom();
 
