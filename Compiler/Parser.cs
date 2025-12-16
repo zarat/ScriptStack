@@ -265,14 +265,16 @@ namespace ScriptStack.Compiler
                     return typeof(int);
                 case TokenType.Float:
                     return typeof(float);
-                case TokenType.Double:
-                    return typeof(double);
                 case TokenType.Boolean:
                     return typeof(bool);
                 case TokenType.String:
                     return typeof(string);
                 case TokenType.Char:
                     return typeof(char);
+                case TokenType.Double:
+                    return typeof(double);
+                case TokenType.Decimal:
+                    return typeof(decimal);
                 default:
                     throw new ParserException( "Der Token '" + tokenType.ToString() + "' kann keinem Literal zugeordnet werden.");
 
@@ -1294,10 +1296,11 @@ namespace ScriptStack.Compiler
 
                 case TokenType.Integer:
                 case TokenType.Float:
-                case TokenType.Double:
                 case TokenType.Boolean:
                 case TokenType.String:
                 case TokenType.Char:
+                case TokenType.Double:
+                case TokenType.Decimal:
 
                     variable.name = AllocateTemporaryVariable();
 
@@ -3115,4 +3118,3 @@ namespace ScriptStack.Compiler
     }
 
 }
-
