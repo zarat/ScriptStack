@@ -82,6 +82,7 @@ namespace ScriptStack.Compiler
         Lock,
         Wait,
         Notify,
+        BinaryNot // ~
     }
 
      public class SerializableToken
