@@ -887,22 +887,27 @@ namespace ScriptStack.Runtime
         {
 
             string identifier = (string)instruction.First.Value;
-
+            
             object val = Evaluate(instruction.First);
-
+            
             Type typeDest = val.GetType();
-
-            if (typeDest == typeof(int))           
-                localMemory[identifier] = (int)val + 1;           
-
+            
+            if (typeDest == typeof(char))
+            {
+                char c = (char)val;
+                localMemory[identifier] = (char)(c + 1);
+            }
+            else if (typeDest == typeof(int))
+                localMemory[identifier] = (int)val + 1;
+            
             else if (typeDest == typeof(float))
                 localMemory[identifier] = (float)val + 1;
-
+            
             else if (typeDest == typeof(double))
                 localMemory[identifier] = (double)val + 1;
-
-            else if (typeDest == typeof(char))
-                localMemory[identifier] = (char)val + 1;
+            
+            else if (typeDest == typeof(decimal))
+                localMemory[identifier] = (decimal)val + 1;
             
             else
                 throw new ExecutionException("Der Typ '" + typeDest.Name + "' kann nicht inkrementiert werden.");
@@ -921,8 +926,13 @@ namespace ScriptStack.Runtime
 
             Type typeDest = val.GetType();
 
-            if (typeDest == typeof(int))
-                localMemory[identifier] = (int)val - 1;           
+            if (typeDest == typeof(char))
+            {
+                char c = (char)val;
+                localMemory[identifier] = (char)(c - 1);
+            }
+            else if (typeDest == typeof(int))
+                localMemory[identifier] = (int)val - 1;
 
             else if (typeDest == typeof(float))
                 localMemory[identifier] = (float)val - 1;
@@ -930,9 +940,9 @@ namespace ScriptStack.Runtime
             else if (typeDest == typeof(double))
                 localMemory[identifier] = (double)val - 1;
 
-            else if (typeDest == typeof(char))
-                localMemory[identifier] = (char)val - 1;
-            
+            else if (typeDest == typeof(decimal))
+                localMemory[identifier] = (decimal)val - 1;
+
             else
                 throw new ExecutionException("Der Typ '" + typeDest.Name + "' kann nicht dekrementiert werden.");
 
@@ -1929,3 +1939,4 @@ namespace ScriptStack.Runtime
     }
 
 }
+
