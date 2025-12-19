@@ -8,6 +8,7 @@ using System.Text;
 using ScriptStack.Collections;
 using ScriptStack.Compiler;
 using ScriptStack.Runtime;
+using ScriptStack.Plugins;
 
 namespace ScriptStack
 {
@@ -28,6 +29,9 @@ namespace ScriptStack
         private Dictionary<object, Interpreter> locks;
         private bool debug;
         private bool optimize;
+
+        // Plugins loaded with isolated ALCs (keep references to prevent premature unload)
+        private List<Plugin> loadedPlugins = new List<Plugin>();
 
         #endregion
 
@@ -60,6 +64,8 @@ namespace ScriptStack
 
             optimize = true;
 
+            loadedPlugins = new List<Plugin>();
+
         }
 
         public Func<List<string>, Lexer> LexerFactory { get; set; } = lines => new Lexer(lines);
@@ -68,6 +74,19 @@ namespace ScriptStack
         {
 
             string path = relativeDirectoryPath; // System.AppDomain.CurrentDomain.BaseDirectory;
+
+            if (!Directory.Exists(path))
+                return;
+
+            var subdirs = Directory.GetDirectories(path);
+            if (subdirs.Length > 0)
+            {
+                var shared = new[] { Assembly.GetExecutingAssembly().GetName().Name! };
+                var loaded = ScriptStack.Plugins.PluginLoader.LoadPlugins(path, this, shared);
+                this.loadedPlugins = loaded;
+                return;
+            }
+
 
             foreach (string dll in System.IO.Directory.GetFiles(path, "*.dll"))
             {
@@ -81,7 +100,7 @@ namespace ScriptStack
                 {
                     assembly = Assembly.LoadFile(dll);
                 }
-                catch (Exception e) { }
+                catch (Exception e) { Console.WriteLine($"[LoadComponents] Fehler beim Laden '{dll}': {e.Message}"); continue; }
 
                 Type[] arrayTypes = assembly.GetExportedTypes();
 
@@ -100,12 +119,6 @@ namespace ScriptStack
 
                     object objectHostModule = constructorInfo.Invoke(new object[0]);
                     Model hostModule = (Model)objectHostModule;
-
-                    /*
-                    Console.WriteLine("[INFO] Lade Modul '" + hostModule.ToString() + "'");
-                    foreach(Routine r in hostModule.Routines)
-                        Console.WriteLine("[INFO] Lade Routine '" + r.Name.ToString() + "'");
-                    */
 
                     Register(hostModule);
 
@@ -142,12 +155,6 @@ namespace ScriptStack
 
                 object objectHostModule = constructorInfo.Invoke(new object[0]);
                 Model hostModule = (Model)objectHostModule;
-
-                /*
-                Console.WriteLine("[INFO] Lade Modul '" + hostModule.ToString() + "'");
-                foreach(Routine r in hostModule.Routines)
-                    Console.WriteLine("[INFO] Lade Routine '" + r.Name.ToString() + "'");
-                */
 
                 Register(hostModule);
 
@@ -222,6 +229,55 @@ namespace ScriptStack
             locks.Clear();
         }
 
+        /// <summary>
+        /// Unload all plugins that were loaded via LoadComponents (subdirectory mode).
+        /// This will deregister their routines and unload their ALCs (collectible).
+        /// </summary>
+        public void UnloadPlugins()
+        {
+            if (loadedPlugins == null || loadedPlugins.Count == 0)
+                return;
+
+            // Deregister routines
+            foreach (var plugin in loadedPlugins)
+            {
+                try
+                {
+                    if (plugin?.Instance is Model model)
+                    {
+                        foreach (var r in model.Routines)
+                        {
+                            if (r != null && routines.ContainsKey(r.Name))
+                                routines.Remove(r.Name);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[UnloadPlugins] Fehler beim Deregistrieren: {ex.Message}");
+                }
+            }
+
+            // Unload contexts
+            foreach (var plugin in loadedPlugins)
+            {
+                try
+                {
+                    plugin.LoadContext?.Unload();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[UnloadPlugins] Fehler beim Unload: {ex.Message}");
+                }
+            }
+
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+
+            loadedPlugins.Clear();
+        }
+
         #endregion
 
         #region Public Properties
@@ -269,4 +325,3 @@ namespace ScriptStack
     }
 
 }
-
