@@ -6,6 +6,10 @@ using System.Text;
 using ScriptStack.Compiler;
 using ScriptStack.Runtime;
 
+// CLR Bridge
+using System.Globalization;
+using System.Reflection;
+
 namespace ScriptStack.Runtime
 {
 
@@ -129,30 +133,14 @@ namespace ScriptStack.Runtime
 
                     }
 
-                    // \todo member access test
                     else
                     {
+                        src = localMemory[(string)operand.Value];
+                        var memberName = operand.Member?.ToString() ?? "";
+                        return GetClrMemberValue(src, memberName);
+                    }
 
-                        object objectIndex = operand.Member;
-
-                        object res = false;
-
-                        System.Reflection.MethodInfo method = ((object)src).GetType().GetMethod((string)objectIndex);
-
-                        try
-                        {
-                            res = method.Invoke(src, new object[0]);
-                        }
-                        catch(Exception) {
-                            parameterStack.Push(NullReference.Instance);
-                            return null;
-                        }
-
-                        return res;
-
-                    }                  
-                    
-                    //else throw new ExecutionException("Der Typ '"+ operand.Type + "' kann an dieser Stelle nicht verarbeitet werden.");
+                //else throw new ExecutionException("Der Typ '"+ operand.Type + "' kann an dieser Stelle nicht verarbeitet werden.");
 
                 /* 
                  * Arrays can be indexed with a "string" like
@@ -218,6 +206,19 @@ namespace ScriptStack.Runtime
                     break;
 
                 case OperandType.Member:
+                    {
+                        object target = localMemory.Exists(identifier) ? localMemory[identifier] : NullReference.Instance;
+
+                        if (target is ArrayList arr)
+                        {
+                            arr[dst.Member] = val;
+                            break;
+                        }
+
+                        // NEU: C# Objekt Member setzen
+                        SetClrMemberValue(target, dst.Member.ToString()!, val);
+                        break;
+                    }
                 case OperandType.Pointer:
                     ArrayList array = null;
 
@@ -1933,6 +1934,90 @@ namespace ScriptStack.Runtime
             get { return host; }
             set { host = value; }
         }
+
+        #endregion
+
+        #region CLR Bridge
+
+        private static readonly BindingFlags ClrMemberFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase;
+
+        private static object ScriptNullToClr(object v) => v is NullReference ? null : v;
+
+        private static object CoerceTo(object value, Type targetType)
+        {
+            value = ScriptNullToClr(value);
+
+            if (value == null)
+            {
+                // null für ValueTypes nicht erlaubt -> Default
+                return targetType.IsValueType ? Activator.CreateInstance(targetType)! : null!;
+            }
+
+            var srcType = value.GetType();
+            if (targetType.IsAssignableFrom(srcType))
+                return value;
+
+            if (targetType.IsEnum)
+                return Enum.Parse(targetType, value.ToString()!, ignoreCase: true);
+
+            // numerische Konvertierungen etc.
+            if (value is IConvertible)
+                return Convert.ChangeType(value, targetType, CultureInfo.InvariantCulture);
+
+            return value;
+        }
+
+        private static object GetClrMemberValue(object target, string memberName)
+        {
+            if (target == null || target is NullReference)
+                return NullReference.Instance;
+
+            var t = target.GetType();
+
+            // 1) Field
+            var field = t.GetField(memberName, ClrMemberFlags);
+            if (field != null)
+                return field.GetValue(target) ?? NullReference.Instance;
+
+            // 2) Property
+            var prop = t.GetProperty(memberName, ClrMemberFlags);
+            if (prop != null && prop.CanRead)
+                return prop.GetValue(target) ?? NullReference.Instance;
+
+            // 3) Fallback: parameterlose Methode (dein bisheriges Verhalten)
+            var m = t.GetMethod(memberName, ClrMemberFlags, binder: null, Type.EmptyTypes, modifiers: null);
+            if (m != null)
+                return m.Invoke(target, Array.Empty<object>()) ?? NullReference.Instance;
+
+            return NullReference.Instance;
+        }
+
+        private static void SetClrMemberValue(object target, string memberName, object scriptValue)
+        {
+            if (target == null || target is NullReference)
+                throw new ExecutionException($"Null reference bei Zuweisung auf Member '{memberName}'.");
+
+            var t = target.GetType();
+
+            var field = t.GetField(memberName, ClrMemberFlags);
+            if (field != null)
+            {
+                var coerced = CoerceTo(scriptValue, field.FieldType);
+                field.SetValue(target, coerced);
+                return;
+            }
+
+            var prop = t.GetProperty(memberName, ClrMemberFlags);
+            if (prop != null && prop.CanWrite)
+            {
+                var coerced = CoerceTo(scriptValue, prop.PropertyType);
+                prop.SetValue(target, coerced);
+                return;
+            }
+
+            throw new ExecutionException($"Member '{memberName}' nicht gefunden oder nicht schreibbar auf Typ '{t.FullName}'.");
+        }
+
 
         #endregion
 
