@@ -1033,6 +1033,46 @@ namespace ScriptStack.Compiler
 
                     string member = ReadIdentifier();
 
+                    // Method call on CLR object: obj.Member(...)
+                    // Lowered into: PUSH args..., MIV obj.Member, <argc>, POP tmp
+                    if (LookAhead().Type == TokenType.LeftParen)
+                    {
+
+                        ReadLeftParenthesis();
+
+                        int parameterCount = 0;
+
+                        if (LookAhead().Type != TokenType.RightParen)
+                        {
+                            while (true)
+                            {
+                                Variable parameter = Expression();
+                                executable.InstructionsInternal.Add(new Instruction(OpCode.PUSH, Operand.Variable(parameter.name)));
+                                ++parameterCount;
+
+                                if (LookAhead().Type == TokenType.RightParen)
+                                    break;
+
+                                ReadComma();
+                            }
+                        }
+
+                        ReadRightParenthesis();
+
+                        // invoke member
+                        executable.InstructionsInternal.Add(
+                            new Instruction(OpCode.MIV,
+                                Operand.MemberVariable(identifier, member),
+                                Operand.Literal(parameterCount)));
+
+                        tmp = AllocateTemporaryVariable();
+                        executable.InstructionsInternal.Add(new Instruction(OpCode.POP, Operand.Variable(tmp)));
+
+                        identifier = tmp;
+                        continue;
+
+                    }
+
                     tmp = AllocateTemporaryVariable();
 
                     executable.InstructionsInternal.Add(
