@@ -1,14 +1,13 @@
-using System;
-using System.Collections.Generic;
-using System.Collections.ObjectModel;
-using System.Text;
-
 using ScriptStack.Compiler;
 using ScriptStack.Runtime;
-
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
 // CLR Bridge
 using System.Globalization;
 using System.Reflection;
+using System.Text;
 
 namespace ScriptStack.Runtime
 {
@@ -176,6 +175,16 @@ namespace ScriptStack.Runtime
 
                         return strSource[(int)objectIndex] + "";
 
+                    }
+
+                    else if (src is System.Collections.IList list)
+                    {
+                        object objectIndex = localMemory[operand.Pointer];
+
+                        if (objectIndex.GetType() != typeof(int))
+                            throw new ExecutionException("Ein CLR Array ist nur numerisch indexierbar.");
+
+                        return list[(int)objectIndex] ?? NullReference.Instance;
                     }
 
                     else
@@ -1362,6 +1371,9 @@ namespace ScriptStack.Runtime
             else if (enumerable.GetType() == typeof(string))
                 Iterator((string)enumerable);
 
+            else if (enumerable is IList list)          // <-- NEU (int[] ist IList!)
+                Iterator(list);
+
             else
                 throw new ExecutionException("Error in PTR.");
 
@@ -2018,6 +2030,26 @@ namespace ScriptStack.Runtime
             throw new ExecutionException($"Member '{memberName}' nicht gefunden oder nicht schreibbar auf Typ '{t.FullName}'.");
         }
 
+        private void Iterator(IList list)
+        {
+            if (list.Count == 0)
+                return;
+
+            object iterator = Evaluate(instruction.First);
+
+            if (iterator.GetType() != typeof(int))
+            {
+                localMemory[instruction.First.Value.ToString()] = 0;
+                return;
+            }
+
+            int i = (int)iterator;
+
+            if (i < list.Count - 1)
+                localMemory[instruction.First.Value.ToString()] = i + 1;
+            else
+                localMemory[instruction.First.Value.ToString()] = NullReference.Instance;
+        }
 
         #endregion
 
