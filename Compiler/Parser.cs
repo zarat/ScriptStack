@@ -1348,16 +1348,9 @@ namespace ScriptStack.Compiler
                             return PostDecrement();
 
                         case TokenType.LeftBracket:
-
-                            UndoToken();
-
-                            return Pointer();
-
                         case TokenType.Period:
-
                             UndoToken();
-
-                            return Member();
+                            return AccessChain();
 
                         case TokenType.LeftParen:
 
@@ -1409,6 +1402,51 @@ namespace ScriptStack.Compiler
 
             }
 
+        }
+
+        private Variable AccessChain()
+        {
+            string identifier = ReadIdentifier();
+            string tmp = null;
+
+            while (true)
+            {
+                if (LookAhead().Type == TokenType.LeftBracket)
+                {
+                    ReadLeftBracket();
+                    Variable index = Expression();
+                    ReadRightBracket();
+
+                    tmp = AllocateTemporaryVariable();
+                    executable.InstructionsInternal.Add(
+                        new Instruction(OpCode.MOV,
+                            Operand.Variable(tmp),
+                            Operand.CreatePointer(identifier, index.name)));
+
+                    identifier = tmp;
+                    continue;
+                }
+
+                if (LookAhead().Type == TokenType.Period)
+                {
+                    ReadPeriod();
+                    string member = ReadIdentifier();
+
+                    tmp = AllocateTemporaryVariable();
+                    executable.InstructionsInternal.Add(
+                        new Instruction(OpCode.MOV,
+                            Operand.Variable(tmp),
+                            Operand.MemberVariable(identifier, member)));
+
+                    identifier = tmp;
+                    continue;
+                }
+
+                break;
+            }
+
+            // identifier ist jetzt das letzte tmp
+            return new Variable(identifier, Scope.Local, null);
         }
 
         /// <summary>
