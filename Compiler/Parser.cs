@@ -596,185 +596,6 @@ namespace ScriptStack.Compiler
         }
 
         /// <summary>
-        /// In fact a struct by now is just an array with pre defined member names. It is stored at the scripts local memory.
-        /// 
-        /// \todo struct is in beta
-        /// </summary>
-        private Variable StructDeclaration()
-        {
-
-            AllocateFunctionFrame();
-
-            Token token = ReadToken();
-
-            if (token.Type != TokenType.Struct)
-                throw new ParserException("Strukturen werden mit 'struct' deklariert.", token);
-
-            InsertDebugInfo(token);
-
-            string identifier = ReadIdentifier();
-
-            executable.InstructionsInternal.Add(new Instruction(OpCode.DCO, Operand.Variable(identifier)));
-
-            string alloc = AllocateTemporaryVariable();
-
-            executable.InstructionsInternal.Add(new Instruction(OpCode.MOV, Operand.Variable(alloc), Operand.Variable(identifier)));
-
-            variables[identifier] = true;
-
-            ArrayList array = new ArrayList();
-
-            ReadLeftBrace();
-
-            int i = 0;
-
-            while (true)
-            {
-
-                Token tok = ReadToken();
-
-                if (tok.Type == TokenType.RightBrace)
-                {
-
-                    UndoToken();
-                    break;
-
-                }
-
-                if (LookAhead().Type == TokenType.RightBrace)
-                {
-
-                    executable.InstructionsInternal.Add(new Instruction(OpCode.ADD, Operand.CreatePointer(identifier, (string)tok.Lexeme), Operand.Literal(0)));
-                    array.Add(tok.Lexeme, 0);
-                    break;
-
-                }
-
-                else if (LookAhead().Type == TokenType.Colon)
-                {
-
-                    ReadToken();
-
-                    Token tmpToken = ReadToken();
-
-                    executable.InstructionsInternal.Add(new Instruction(OpCode.ADD, Operand.CreatePointer(identifier, (string)tok.Lexeme), Operand.Variable(tmpToken.Lexeme.ToString())));
-
-                    array.Add(tok.Lexeme, tmpToken.Lexeme);
-
-                }
-
-                else
-                {
-
-                    executable.InstructionsInternal.Add(new Instruction(OpCode.ADD, Operand.CreatePointer(identifier, (string)tok.Lexeme), Operand.Literal(0)));
-
-                    array.Add(tok.Lexeme, 0);
-
-                }
-
-                if (LookAhead().Type == TokenType.RightBrace)
-                    break;
-
-                ReadComma();
-
-                i++;
-
-            }
-
-            ReadRightBrace();
-
-            executable.ScriptMemory[identifier] = array;
-
-            FreeFunctionFrame();
-
-            return new Variable(identifier, Scope.Local, typeof(ArrayList));
-
-        }
-
-        /// <summary>
-        /// Enumeration stored in scripts local memory
-        /// 
-        /// \todo Enum is in beta
-        /// </summary>
-        /// <returns></returns>
-        private Variable EnumDeclaration()
-        {
-
-            AllocateFunctionFrame();
-
-            Token token = ReadToken();
-
-            if (token.Type != TokenType.Enum)
-                throw new ParserException("Enumerationen werden mit 'enum' deklariert.", token);
-
-            InsertDebugInfo(token);
-
-            string identifier = ReadIdentifier();
-
-            executable.InstructionsInternal.Add(new Instruction(OpCode.DCO, Operand.Variable(identifier)));
-
-            string alloc = AllocateTemporaryVariable();
-
-            executable.InstructionsInternal.Add(new Instruction(OpCode.MOV, Operand.Variable(alloc), Operand.Variable(identifier)));
-
-            variables[identifier] = true;
-
-            ArrayList array = new ArrayList();
-
-            ReadLeftBrace();
-
-            int i = 0;
-
-            while (true)
-            {
-
-                Token tok = ReadToken();
-
-                if (tok.Type == TokenType.RightBrace)
-                {
-
-                    UndoToken();
-                    break;
-
-                }
-
-                if (LookAhead().Type == TokenType.RightBrace)
-                {
-
-                    executable.InstructionsInternal.Add(new Instruction(OpCode.ADD, Operand.CreatePointer(identifier, (string)tok.Lexeme), Operand.Literal(i)));
-                    array.Add(tok.Lexeme, i);
-                    break;
-
-                }
-                else
-                {
-
-                    executable.InstructionsInternal.Add(new Instruction(OpCode.ADD, Operand.CreatePointer(identifier, (string)tok.Lexeme), Operand.Literal(i)));
-
-                    array.Add(tok.Lexeme, i);
-
-                }
-
-                if (LookAhead().Type == TokenType.RightBrace)
-                    break;
-
-                ReadComma();
-
-                i++;
-
-            }
-
-            ReadRightBrace();
-
-            executable.ScriptMemory[identifier] = array;
-
-            FreeFunctionFrame();
-
-            return new Variable(identifier, Scope.Local, typeof(ArrayList));
-
-        }
-        
-        /// <summary>
         /// 
         /// </summary>
         private void LocalVariableDeclaration()
@@ -1110,113 +931,8 @@ namespace ScriptStack.Compiler
 
         }
 
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <returns></returns>
-        private Variable BinaryAnd()
-        {
-
-            string left = ExpectIdentifier();
-
-            Token token = ReadToken();
-
-            if (token.Type != TokenType.AssignBinaryAnd)
-                throw new ParserException("Binary AND '&=' erwartet.", token);
-
-            Variable right = Factor();
-
-            executable.InstructionsInternal.Add(new Instruction(OpCode.ANDB, Operand.Variable(left), Operand.Variable(right.name)));
-
-            return right;
-
-        }
-
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <returns></returns>
-        private Variable BinaryOr()
-        {
-
-            string left = ExpectIdentifier();
-
-            Token token = ReadToken();
-
-            if (token.Type != TokenType.AssignBinaryOr)
-                throw new ParserException("Binary OR '|=' erwartet.", token);
-
-            Variable right = Factor();
-
-            executable.InstructionsInternal.Add(new Instruction(OpCode.ORB, Operand.Variable(left), Operand.Variable(right.name)));
-
-            return right;
-
-        }
-
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <returns></returns>
-        private Variable BinaryNotAssign()
-        {
-
-            string left = ExpectIdentifier();
-
-            Token token = ReadToken();
-
-            if (token.Type != TokenType.AssignBinaryNot)
-                throw new ParserException("Binary NEG '~=' erwartet.", token);
-
-            Variable right = Factor();
-
-            executable.InstructionsInternal.Add(new Instruction(OpCode.NOTB, Operand.Variable(left), Operand.Variable(right.name)));
-
-            return right;
-
-        }
-
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <returns></returns>
-        private Variable BinaryNot()
-        {
-
-            Token token = ReadToken();
-
-            if (token.Type != TokenType.AssignBinaryNot)
-                throw new ParserException("Binary NOT '~=' erwartet.", token);
-
-            Variable right = Factor();
-
-            executable.InstructionsInternal.Add(new Instruction(OpCode.NOTB, Operand.Variable(right.name)));
-
-            return right;
-
-        }
-
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <returns></returns>
-        private Variable Xor()
-        {
-
-            string left = ExpectIdentifier();
-
-            Token token = ReadToken();
-
-            if (token.Type != TokenType.AssignXor)
-                throw new ParserException("Binary XOR '~=' erwartet.", token);
-
-            Variable right = Factor();
-
-            executable.InstructionsInternal.Add(new Instruction(OpCode.XOR, Operand.Variable(left), Operand.Variable(right.name)));
-
-            return right;
-
-        }
+        // Bitwise assignment operators ("&=", "|=", "^=", "~=") are handled via
+        // AssignmentOpcode(...) and the generic assignment parser.
 
         public string ToLiteral(string input)
         {
@@ -1718,6 +1434,117 @@ namespace ScriptStack.Compiler
         }
 
         /// <summary>
+        /// Bitwise AND: "a & b" (lower precedence than arithmetic, higher than comparisons)
+        /// </summary>
+        private Variable BitwiseAnd()
+        {
+
+            List<Instruction> listInstructions = executable.InstructionsInternal;
+
+            Variable first = Arithmetic();
+
+            while (true)
+            {
+
+                Token token = ReadToken();
+
+                if (token.Type == TokenType.BinaryAnd)
+                {
+
+                    Variable second = Arithmetic();
+
+                    listInstructions.Add(new Instruction(OpCode.ANDB, Operand.Variable(first.name), Operand.Variable(second.name)));
+
+                    first.derivatedType = Derivate(token, first.derivatedType, second.derivatedType);
+
+                }
+                else
+                {
+
+                    UndoToken();
+                    return first;
+
+                }
+
+            }
+
+        }
+
+        /// <summary>
+        /// Bitwise XOR: "a ^ b"
+        /// </summary>
+        private Variable BitwiseXor()
+        {
+
+            List<Instruction> listInstructions = executable.InstructionsInternal;
+
+            Variable first = BitwiseAnd();
+
+            while (true)
+            {
+
+                Token token = ReadToken();
+
+                if (token.Type == TokenType.Xor)
+                {
+
+                    Variable second = BitwiseAnd();
+
+                    listInstructions.Add(new Instruction(OpCode.XOR, Operand.Variable(first.name), Operand.Variable(second.name)));
+
+                    first.derivatedType = Derivate(token, first.derivatedType, second.derivatedType);
+
+                }
+                else
+                {
+
+                    UndoToken();
+                    return first;
+
+                }
+
+            }
+
+        }
+
+        /// <summary>
+        /// Bitwise OR: "a | b"
+        /// </summary>
+        private Variable BitwiseOr()
+        {
+
+            List<Instruction> listInstructions = executable.InstructionsInternal;
+
+            Variable first = BitwiseXor();
+
+            while (true)
+            {
+
+                Token token = ReadToken();
+
+                if (token.Type == TokenType.BinaryOr)
+                {
+
+                    Variable second = BitwiseXor();
+
+                    listInstructions.Add(new Instruction(OpCode.ORB, Operand.Variable(first.name), Operand.Variable(second.name)));
+
+                    first.derivatedType = Derivate(token, first.derivatedType, second.derivatedType);
+
+                }
+                else
+                {
+
+                    UndoToken();
+                    return first;
+
+                }
+
+            }
+
+        }
+
+        /// <summary>
         /// 
         /// </summary>
         /// <returns></returns>
@@ -1726,13 +1553,13 @@ namespace ScriptStack.Compiler
 
             List<Instruction> instructions = executable.InstructionsInternal;
 
-            Variable first = Arithmetic();
+            Variable first = BitwiseOr();
 
             Token token = ReadToken();
 
             if (RelationalOperator(token.Type)) {
 
-                Variable second = Arithmetic();
+                Variable second = BitwiseOr();
 
                 instructions.Add(new Instruction(RelationalOpcode(token.Type), Operand.Variable(first.name), Operand.Variable(second.name)));
 
@@ -3033,12 +2860,6 @@ namespace ScriptStack.Compiler
 
                 if (token.Type == TokenType.Shared || token.Type == TokenType.Var)
                     VariableDeclaration();
-
-                else if (token.Type == TokenType.Struct)
-                    StructDeclaration();
-
-                else if (token.Type == TokenType.Enum)
-                    EnumDeclaration();
 
                 else
                     break;

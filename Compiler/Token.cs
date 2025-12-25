@@ -73,16 +73,15 @@ namespace ScriptStack.Compiler
         Decimal,
         ShiftLeft,
         ShiftRight,
-        CustomObject,
-        Volatile,
-        Struct,
-        Enum,
         Run,
         Yield,
         Lock,
         Wait,
         Notify,
-        BinaryNot // ~
+        BinaryNot, // ~
+        BinaryAnd, // &
+        BinaryOr,  // |
+        Xor        // ^
     }
 
      public class SerializableToken

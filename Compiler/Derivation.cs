@@ -272,6 +272,18 @@ namespace ScriptStack.Compiler
             derivates[TokenType.Divide] = Factor;
             derivates[TokenType.Modulo] = Factor;
 
+            // Bitwise operators (currently only supported for int at runtime)
+            // Keep null-derivation permissive, because the language is mostly dynamically typed.
+            Dictionary<string, Type> Bitwise = new Dictionary<string, Type>();
+            Bitwise[Derivate(null, null)] = null;
+            Bitwise[Derivate(null, typeInt)] = null;
+            Bitwise[Derivate(typeInt, null)] = null;
+            Bitwise[Derivate(typeInt, typeInt)] = typeInt;
+
+            derivates[TokenType.BinaryAnd] = Bitwise;
+            derivates[TokenType.Xor] = Bitwise;
+            derivates[TokenType.BinaryOr] = Bitwise;
+
         }
 
         /// <summary>

@@ -201,6 +201,52 @@ namespace ScriptStack.Runtime
         }
 
         /// <summary>
+        /// Convert runtime values to a boolean for conditions and jumps.
+        ///
+        /// The language is dynamically typed, so we treat common "falsy" values as false:
+        /// - null / NULL
+        /// - false
+        /// - numeric 0 (int/float/double/decimal)
+        /// - empty string
+        /// - empty array
+        /// Everything else is considered true.
+        /// </summary>
+        private bool ToBool(object value)
+        {
+
+            if (value == null || value == NullReference.Instance)
+                return false;
+
+            if (value is bool b)
+                return b;
+
+            if (value is int i)
+                return i != 0;
+
+            if (value is long l)
+                return l != 0L;
+
+            if (value is float f)
+                return f != 0.0f;
+
+            if (value is double d)
+                return d != 0.0;
+
+            if (value is decimal m)
+                return m != 0.0m;
+
+            if (value is string s)
+                return s.Length != 0;
+
+            if (value is ArrayList a)
+                return a.Count != 0;
+
+            // Any other object is considered truthy.
+            return true;
+
+        }
+
+        /// <summary>
         /// 
         /// </summary>
         /// <param name="dst"></param>
@@ -629,34 +675,10 @@ namespace ScriptStack.Runtime
 
             object src = Evaluate(instruction.Second);
 
-            Type typeDest = dst.GetType();
-
-            Type typeSource = src.GetType();
-
             bool result = false;
 
-            bool dstVal = false; 
-
-            bool srcVal = false; 
-
-            if (typeSource == typeof(bool))
-                srcVal = (bool)src;
-
-            else if (typeSource == typeof(NullReference))
-                srcVal = false;
-
-            else
-                srcVal = ((double)src != 0.0) ? true : false;
-
-
-            if (typeDest == typeof(bool))
-                dstVal = (bool)dst;
-
-            else if (typeDest == typeof(NullReference))
-                dstVal = false;
-
-            else
-                dstVal = ((double)dst != 0.0) ? true : false;
+            bool dstVal = ToBool(dst);
+            bool srcVal = ToBool(src);
 
             switch (instruction.OpCode)
             {
@@ -1258,7 +1280,7 @@ namespace ScriptStack.Runtime
         private void JZ()
         {
 
-            if (!(bool)Evaluate(instruction.First))
+            if (!ToBool(Evaluate(instruction.First)))
                 return;
 
             Instruction target = instruction.Second.InstructionPointer;
@@ -1274,8 +1296,8 @@ namespace ScriptStack.Runtime
         /// </summary>
         private void JNZ()
         {
- 
-            if ((bool)Evaluate(instruction.First))
+
+            if (ToBool(Evaluate(instruction.First)))
                 return;
 
             FunctionFrame frame = functionStack.Peek();
