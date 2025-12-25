@@ -555,12 +555,6 @@ namespace ScriptStack.Compiler
                                 tokenType = TokenType.Shared;
                             else if (lexeme == "var")
                                 tokenType = TokenType.Var;
-                            else if (lexeme == "volatile")
-                                tokenType = TokenType.Volatile;
-                            else if (lexeme == "struct")
-                                tokenType = TokenType.Struct;
-                            else if (lexeme == "enum")
-                                tokenType = TokenType.Enum;
 
                             else if (lexeme == "include")
                                 tokenType = TokenType.Include;
