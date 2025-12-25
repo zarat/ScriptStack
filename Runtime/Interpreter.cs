@@ -561,6 +561,58 @@ namespace ScriptStack.Runtime
 
             }
 
+            // NEW: CLR/object support while preserving ScriptStack numeric semantics
+            bool numericDest =
+                typeDest == typeof(int) ||
+                typeDest == typeof(float) ||
+                typeDest == typeof(double) ||
+                typeDest == typeof(char);
+
+            bool numericSource =
+                typeSource == typeof(int) ||
+                typeSource == typeof(float) ||
+                typeSource == typeof(double) ||
+                typeSource == typeof(char);
+
+            // Equality/inequality for arbitrary CLR objects (and ScriptStack objects),
+            // BUT keep the old numeric cross-type behaviour (int == float etc.)
+            if ((instruction.OpCode == OpCode.CEQ || instruction.OpCode == OpCode.CNE) && !(numericDest && numericSource))
+            {
+                bool eq = Equals(ScriptNullToClr(dst), ScriptNullToClr(src));
+                result = (instruction.OpCode == OpCode.CEQ) ? eq : !eq;
+                Assignment(instruction.First, result);
+                return;
+            }
+
+            // Ordering comparisons for arbitrary CLR objects via IComparable,
+            // again only when we are NOT in the numeric fast-path.
+            if (!(numericDest && numericSource) &&
+                (instruction.OpCode == OpCode.CG || instruction.OpCode == OpCode.CGE || instruction.OpCode == OpCode.CL || instruction.OpCode == OpCode.CLE) &&
+                dst is IComparable cmpDst)
+            {
+                int cmp;
+                try
+                {
+                    cmp = cmpDst.CompareTo(ScriptNullToClr(src));
+                }
+                catch
+                {
+                    // last resort: string compare
+                    cmp = string.Compare(dst.ToString(), src.ToString(), StringComparison.Ordinal);
+                }
+
+                switch (instruction.OpCode)
+                {
+                    case OpCode.CG:  result = cmp > 0; break;
+                    case OpCode.CGE: result = cmp >= 0; break;
+                    case OpCode.CL:  result = cmp < 0; break;
+                    case OpCode.CLE: result = cmp <= 0; break;
+                }
+
+                Assignment(instruction.First, result);
+                return;
+            }
+
             double dstVal = 0.0;
 
             double srcVal = 0.0;
@@ -715,7 +767,7 @@ namespace ScriptStack.Runtime
                     break;
                 }
 
-                if (tmp == iterator)
+                if (Equals(tmp, iterator))
                     key = true;
 
             }
@@ -737,6 +789,47 @@ namespace ScriptStack.Runtime
             localMemory[instruction.First.Value.ToString()] = next;
 
         }
+
+        private void Iterator(IDictionary dict)
+        {
+
+            if (dict.Count == 0)
+                return;
+
+            object iterator = Evaluate(instruction.First);
+
+            bool found = false;
+
+            object next = null;
+
+            foreach (object tmp in dict.Keys)
+            {
+
+                if (found)
+                {
+                    next = tmp;
+                    break;
+                }
+
+                if (Equals(tmp, iterator))
+                    found = true;
+
+            }
+
+            if (!found)
+            {
+                IDictionaryEnumerator en = dict.GetEnumerator();
+                if (en.MoveNext())
+                    next = en.Key;
+            }
+
+            if (next == null)
+                next = NullReference.Instance;
+
+            localMemory[instruction.First.Value.ToString()] = next;
+
+        }
+
 
         private void Iterator(string str)
         {
@@ -1363,6 +1456,13 @@ namespace ScriptStack.Runtime
             if (enumerable is IList list)
             {
                 Iterator(list);
+                return;
+            }
+
+
+            if (enumerable is IDictionary dict)
+            {
+                Iterator(dict);
                 return;
             }
 
@@ -2012,6 +2112,11 @@ namespace ScriptStack.Runtime
         {
             value = ScriptNullToClr(value);
 
+            // Handle Nullable<T>
+            var underlyingNullable = Nullable.GetUnderlyingType(targetType);
+            if (underlyingNullable != null)
+                targetType = underlyingNullable;
+
             if (value == null)
             {
                 // null für ValueTypes nicht erlaubt -> Default
@@ -2022,15 +2127,184 @@ namespace ScriptStack.Runtime
             if (targetType.IsAssignableFrom(srcType))
                 return value;
 
+            // --- ScriptStack ArrayList -> CLR types ---
+            if (value is ArrayList scriptArr)
+            {
+                // CLR Array (e.g. int[])
+                if (targetType.IsArray)
+                {
+                    var elemType = targetType.GetElementType()!;
+                    return ConvertScriptArrayListToClrArray(scriptArr, elemType);
+                }
+
+                // Generic collections (List<T>, ICollection<T>, IEnumerable<T>, etc.)
+                if (TryConvertScriptArrayListToGenericCollection(scriptArr, targetType, out var coll))
+                    return coll;
+
+                // Generic dictionaries (Dictionary<TKey,TValue>, IDictionary<TKey,TValue>)
+                if (TryConvertScriptArrayListToGenericDictionary(scriptArr, targetType, out var dict))
+                    return dict;
+            }
+
+            // Enum conversions
             if (targetType.IsEnum)
                 return Enum.Parse(targetType, value.ToString()!, ignoreCase: true);
 
-            // numerische Konvertierungen etc.
+            // numeric / string conversions etc.
             if (value is IConvertible)
                 return Convert.ChangeType(value, targetType, CultureInfo.InvariantCulture);
 
+            // last resort: keep as-is (Reflection may still accept via implicit operators)
             return value;
         }
+
+        private static object ConvertScriptArrayListToClrArray(ArrayList scriptArr, Type elementType)
+        {
+            // We only support list-like arrays here: integer keys, 0..n-1 (no gaps).
+            // Anything associative should be mapped to dictionaries instead.
+            if (scriptArr.Count == 0)
+                return Array.CreateInstance(elementType, 0);
+
+            // ensure all keys are ints
+            var keys = new List<int>(scriptArr.Count);
+            foreach (var k in scriptArr.Keys)
+            {
+                if (k is int i)
+                    keys.Add(i);
+                else
+                    throw new ExecutionException($"Associatives Array kann nicht zu '{elementType.Name}[]' konvertiert werden (Key-Typ: {k?.GetType().Name ?? "null"}).");
+            }
+
+            keys.Sort();
+            for (int i = 0; i < keys.Count; i++)
+            {
+                if (keys[i] != i)
+                    throw new ExecutionException($"Array kann nicht zu '{elementType.Name}[]' konvertiert werden: Keys müssen 0..n-1 ohne Lücken sein.");
+            }
+
+            var arr = Array.CreateInstance(elementType, keys.Count);
+            for (int i = 0; i < keys.Count; i++)
+            {
+                var v = scriptArr[i]; // uses our indexer: returns NullReference.Instance if missing
+                var coerced = CoerceTo(v, elementType);
+                arr.SetValue(coerced, i);
+            }
+            return arr;
+        }
+
+        private static Type GetGenericInterface(Type type, Type genericDefinition)
+        {
+            if (type.IsInterface && type.IsGenericType && type.GetGenericTypeDefinition() == genericDefinition)
+                return type;
+
+            return type.GetInterfaces()
+                .FirstOrDefault(i => i.IsGenericType && i.GetGenericTypeDefinition() == genericDefinition);
+        }
+
+        private static bool TryConvertScriptArrayListToGenericCollection(ArrayList scriptArr, Type targetType, out object collection)
+        {
+            collection = null;
+
+            var iface = GetGenericInterface(targetType, typeof(ICollection<>))
+                     ?? GetGenericInterface(targetType, typeof(IList<>))
+                     ?? GetGenericInterface(targetType, typeof(IEnumerable<>))
+                     ?? GetGenericInterface(targetType, typeof(IReadOnlyCollection<>))
+                     ?? GetGenericInterface(targetType, typeof(IReadOnlyList<>));
+
+            if (iface == null)
+                return false;
+
+            var elemType = iface.GetGenericArguments()[0];
+
+            // Choose concrete type
+            Type concrete = targetType;
+            if (targetType.IsInterface || targetType.IsAbstract)
+                concrete = typeof(List<>).MakeGenericType(elemType);
+
+            object instance;
+            try
+            {
+                instance = Activator.CreateInstance(concrete)!;
+            }
+            catch
+            {
+                // If the target type is non-instantiable, fallback to List<T>
+                instance = Activator.CreateInstance(typeof(List<>).MakeGenericType(elemType))!;
+                concrete = instance.GetType();
+            }
+
+            // Find Add(T)
+            var add = concrete.GetMethod("Add", new[] { elemType })
+                   ?? concrete.GetMethods().FirstOrDefault(m => m.Name == "Add" && m.GetParameters().Length == 1);
+
+            if (add == null)
+                return false;
+
+            // Add items in key order (int keys). If there are non-int keys, refuse.
+            var intKeys = new List<int>();
+            foreach (var k in scriptArr.Keys)
+            {
+                if (k is int i) intKeys.Add(i);
+                else return false;
+            }
+            intKeys.Sort();
+
+            foreach (var k in intKeys)
+            {
+                var v = scriptArr[k];
+                var coerced = CoerceTo(v, elemType);
+                add.Invoke(instance, new[] { coerced });
+            }
+
+            collection = instance;
+            return true;
+        }
+
+        private static bool TryConvertScriptArrayListToGenericDictionary(ArrayList scriptArr, Type targetType, out object dict)
+        {
+            dict = null;
+
+            var iface = GetGenericInterface(targetType, typeof(IDictionary<,>));
+            if (iface == null)
+                return false;
+
+            var ga = iface.GetGenericArguments();
+            var keyType = ga[0];
+            var valType = ga[1];
+
+            Type concrete = targetType;
+            if (targetType.IsInterface || targetType.IsAbstract)
+                concrete = typeof(Dictionary<,>).MakeGenericType(keyType, valType);
+
+            object instance;
+            try
+            {
+                instance = Activator.CreateInstance(concrete)!;
+            }
+            catch
+            {
+                instance = Activator.CreateInstance(typeof(Dictionary<,>).MakeGenericType(keyType, valType))!;
+                concrete = instance.GetType();
+            }
+
+            var add = concrete.GetMethod("Add", new[] { keyType, valType })
+                   ?? concrete.GetMethods().FirstOrDefault(m => m.Name == "Add" && m.GetParameters().Length == 2);
+
+            if (add == null)
+                return false;
+
+            foreach (var k in scriptArr.Keys)
+            {
+                var v = scriptArr[k];
+                var ck = CoerceTo(k, keyType);
+                var cv = CoerceTo(v, valType);
+                add.Invoke(instance, new[] { ck, cv });
+            }
+
+            dict = instance;
+            return true;
+        }
+
 
         private static object GetClrMemberValue(object target, string memberName)
         {
