@@ -41,11 +41,6 @@ namespace ScriptStack.Runtime
         CALL,
         RET,
         INV,
-        /// <summary>
-        /// Invoke a CLR instance method via reflection.
-        /// Parameters are taken from the parameter stack.
-        /// </summary>
-        MIV,
         RUN,
         SHL,
         SHR,
