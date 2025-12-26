@@ -34,10 +34,6 @@ namespace ScriptStack.Compiler
         AssignMinus,
         AssignMultiply,
         AssignDivide,
-        // bitwise ops
-        BinaryAnd, // &
-        BinaryOr,  // |
-        Xor,       // ^
         AssignBinaryAnd, 
         AssignBinaryOr, 
         AssignXor, 
@@ -82,7 +78,10 @@ namespace ScriptStack.Compiler
         Lock,
         Wait,
         Notify,
-        BinaryNot // ~
+        BinaryNot, // ~
+        BinaryAnd, // &
+        BinaryOr,  // |
+        Xor        // ^
     }
 
      public class SerializableToken

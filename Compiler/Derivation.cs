@@ -79,17 +79,6 @@ namespace ScriptStack.Compiler
 
             derivates[TokenType.And] = Logic;
             derivates[TokenType.Or] = Logic;
-
-            // Bitwise operators (currently runtime supports int only)
-            Dictionary<string, Type> Bitwise = new Dictionary<string, Type>();
-            Bitwise[Derivate(null, null)] = null;
-            Bitwise[Derivate(null, typeInt)] = null;
-            Bitwise[Derivate(typeInt, null)] = null;
-            Bitwise[Derivate(typeInt, typeInt)] = typeInt;
-
-            derivates[TokenType.BinaryAnd] = Bitwise;
-            derivates[TokenType.BinaryOr] = Bitwise;
-            derivates[TokenType.Xor] = Bitwise;
             
             Dictionary<string, Type> Comparision = new Dictionary<string, Type>();
 
