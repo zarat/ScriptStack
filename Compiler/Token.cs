@@ -34,6 +34,10 @@ namespace ScriptStack.Compiler
         AssignMinus,
         AssignMultiply,
         AssignDivide,
+        // bitwise ops
+        BinaryAnd, // &
+        BinaryOr,  // |
+        Xor,       // ^
         AssignBinaryAnd, 
         AssignBinaryOr, 
         AssignXor, 
@@ -73,10 +77,6 @@ namespace ScriptStack.Compiler
         Decimal,
         ShiftLeft,
         ShiftRight,
-        CustomObject,
-        Volatile,
-        Struct,
-        Enum,
         Run,
         Yield,
         Lock,

@@ -412,6 +412,13 @@ namespace ScriptStack.Compiler
                             tokenStream.Add(new Token(TokenType.AssignXor, "^=", line, column, currentLine));
                             state = State.None;
                         }
+                        else
+                        {
+                            // bitwise XOR '^'
+                            tokenStream.Add(new Token(TokenType.Xor, "^", line, column, currentLine));
+                            UndoChar();
+                            state = State.None;
+                        }
                         break;
 
                     case State.Modulo:
@@ -440,7 +447,12 @@ namespace ScriptStack.Compiler
                             state = State.None;
                         }
                         else
-                            InvalidCharacter(ch);
+                        {
+                            // bitwise AND '&'
+                            tokenStream.Add(new Token(TokenType.BinaryAnd, "&", line, column, currentLine));
+                            UndoChar();
+                            state = State.None;
+                        }
                         break;
 
                     case State.Or:
@@ -455,7 +467,12 @@ namespace ScriptStack.Compiler
                             state = State.None;
                         }
                         else
-                            InvalidCharacter(ch);
+                        {
+                            // bitwise OR '|'
+                            tokenStream.Add(new Token(TokenType.BinaryOr, "|", line, column, currentLine));
+                            UndoChar();
+                            state = State.None;
+                        }
                         break;
 
                     case State.Not:
@@ -555,12 +572,6 @@ namespace ScriptStack.Compiler
                                 tokenType = TokenType.Shared;
                             else if (lexeme == "var")
                                 tokenType = TokenType.Var;
-                            else if (lexeme == "volatile")
-                                tokenType = TokenType.Volatile;
-                            else if (lexeme == "struct")
-                                tokenType = TokenType.Struct;
-                            else if (lexeme == "enum")
-                                tokenType = TokenType.Enum;
 
                             else if (lexeme == "include")
                                 tokenType = TokenType.Include;

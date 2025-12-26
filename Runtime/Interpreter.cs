@@ -57,7 +57,40 @@ namespace ScriptStack.Runtime
 
         private Host host;
 
-        // \todo make models accessible like members
+        private int ToInt32Bitwise(object value, string opName = "bitwise")
+        {
+            if (value == null) throw new ExecutionException($"Cannot apply {opName} operation to null.");
+            if (value is NullReference) throw new ExecutionException($"Cannot apply {opName} operation to 'null'.");
+
+            Type t = value.GetType();
+
+            try
+            {
+                switch (Type.GetTypeCode(t))
+                {
+                    case TypeCode.Int32: return (int)value;
+                    case TypeCode.Boolean: return ((bool)value) ? 1 : 0;
+                    case TypeCode.Char: return (char)value;
+                    case TypeCode.SByte: return (sbyte)value;
+                    case TypeCode.Byte: return (byte)value;
+                    case TypeCode.Int16: return (short)value;
+                    case TypeCode.UInt16: return (ushort)value;
+                    case TypeCode.UInt32: { uint u = (uint)value; if (u > int.MaxValue) throw new OverflowException(); return (int)u; }
+                    case TypeCode.Int64: { long l = (long)value; if (l < int.MinValue || l > int.MaxValue) throw new OverflowException(); return (int)l; }
+                    case TypeCode.UInt64: { ulong ul = (ulong)value; if (ul > (ulong)int.MaxValue) throw new OverflowException(); return (int)ul; }
+                    case TypeCode.Single: { float f = (float)value; if (float.IsNaN(f) || float.IsInfinity(f) || f < int.MinValue || f > int.MaxValue) throw new OverflowException(); return (int)f; }
+                    case TypeCode.Double: { double d = (double)value; if (double.IsNaN(d) || double.IsInfinity(d) || d < int.MinValue || d > int.MaxValue) throw new OverflowException(); return (int)d; }
+                    case TypeCode.Decimal: return decimal.ToInt32((decimal)value);
+                    default: throw new InvalidCastException();
+                }
+            }
+            catch
+            {
+                throw new ExecutionException($"Values of type '{t.Name}' cannot be used in {opName} operations.");
+            }
+        }
+
+
         private object Evaluate(Operand operand)
         {
 
@@ -1237,7 +1270,8 @@ namespace ScriptStack.Runtime
             {
 
                 case OperandType.Variable:
-                    int res = (int)val | (int)localMemory[(string)operand.Value];
+                    //int res = (int)val | (int)localMemory[(string)operand.Value];
+                    int res = ToInt32Bitwise(localMemory[(string)operand.Value], "|") | ToInt32Bitwise(val, "|");
 
                     identifier = operand.Value.ToString();
 
@@ -1265,7 +1299,8 @@ namespace ScriptStack.Runtime
             {
 
                 case OperandType.Variable:
-                    int res = (int)localMemory[(string)operand.Value] & (int)val;
+                    //int res = (int)localMemory[(string)operand.Value] & (int)val;
+                    int res = ToInt32Bitwise(localMemory[(string)operand.Value], "&") & ToInt32Bitwise(val, "&");
 
                     identifier = operand.Value.ToString();
 
@@ -1310,7 +1345,8 @@ namespace ScriptStack.Runtime
             {
 
                 case OperandType.Variable:
-                    int res = (int)val ^ (int)localMemory[(string)operand.Value];
+                    //int res = (int)val ^ (int)localMemory[(string)operand.Value];
+                    int res = ToInt32Bitwise(localMemory[(string)operand.Value], "^") ^ ToInt32Bitwise(val, "^");
 
                     identifier = operand.Value.ToString();
 
@@ -1343,7 +1379,7 @@ namespace ScriptStack.Runtime
         private void JZ()
         {
 
-            if (!(bool)Evaluate(instruction.First))
+            if ((bool)Evaluate(instruction.First))
                 return;
 
             Instruction target = instruction.Second.InstructionPointer;
@@ -1360,7 +1396,7 @@ namespace ScriptStack.Runtime
         private void JNZ()
         {
  
-            if ((bool)Evaluate(instruction.First))
+            if (!(bool)Evaluate(instruction.First))
                 return;
 
             FunctionFrame frame = functionStack.Peek();

@@ -596,185 +596,6 @@ namespace ScriptStack.Compiler
         }
 
         /// <summary>
-        /// In fact a struct by now is just an array with pre defined member names. It is stored at the scripts local memory.
-        /// 
-        /// \todo struct is in beta
-        /// </summary>
-        private Variable StructDeclaration()
-        {
-
-            AllocateFunctionFrame();
-
-            Token token = ReadToken();
-
-            if (token.Type != TokenType.Struct)
-                throw new ParserException("Strukturen werden mit 'struct' deklariert.", token);
-
-            InsertDebugInfo(token);
-
-            string identifier = ReadIdentifier();
-
-            executable.InstructionsInternal.Add(new Instruction(OpCode.DCO, Operand.Variable(identifier)));
-
-            string alloc = AllocateTemporaryVariable();
-
-            executable.InstructionsInternal.Add(new Instruction(OpCode.MOV, Operand.Variable(alloc), Operand.Variable(identifier)));
-
-            variables[identifier] = true;
-
-            ArrayList array = new ArrayList();
-
-            ReadLeftBrace();
-
-            int i = 0;
-
-            while (true)
-            {
-
-                Token tok = ReadToken();
-
-                if (tok.Type == TokenType.RightBrace)
-                {
-
-                    UndoToken();
-                    break;
-
-                }
-
-                if (LookAhead().Type == TokenType.RightBrace)
-                {
-
-                    executable.InstructionsInternal.Add(new Instruction(OpCode.ADD, Operand.CreatePointer(identifier, (string)tok.Lexeme), Operand.Literal(0)));
-                    array.Add(tok.Lexeme, 0);
-                    break;
-
-                }
-
-                else if (LookAhead().Type == TokenType.Colon)
-                {
-
-                    ReadToken();
-
-                    Token tmpToken = ReadToken();
-
-                    executable.InstructionsInternal.Add(new Instruction(OpCode.ADD, Operand.CreatePointer(identifier, (string)tok.Lexeme), Operand.Variable(tmpToken.Lexeme.ToString())));
-
-                    array.Add(tok.Lexeme, tmpToken.Lexeme);
-
-                }
-
-                else
-                {
-
-                    executable.InstructionsInternal.Add(new Instruction(OpCode.ADD, Operand.CreatePointer(identifier, (string)tok.Lexeme), Operand.Literal(0)));
-
-                    array.Add(tok.Lexeme, 0);
-
-                }
-
-                if (LookAhead().Type == TokenType.RightBrace)
-                    break;
-
-                ReadComma();
-
-                i++;
-
-            }
-
-            ReadRightBrace();
-
-            executable.ScriptMemory[identifier] = array;
-
-            FreeFunctionFrame();
-
-            return new Variable(identifier, Scope.Local, typeof(ArrayList));
-
-        }
-
-        /// <summary>
-        /// Enumeration stored in scripts local memory
-        /// 
-        /// \todo Enum is in beta
-        /// </summary>
-        /// <returns></returns>
-        private Variable EnumDeclaration()
-        {
-
-            AllocateFunctionFrame();
-
-            Token token = ReadToken();
-
-            if (token.Type != TokenType.Enum)
-                throw new ParserException("Enumerationen werden mit 'enum' deklariert.", token);
-
-            InsertDebugInfo(token);
-
-            string identifier = ReadIdentifier();
-
-            executable.InstructionsInternal.Add(new Instruction(OpCode.DCO, Operand.Variable(identifier)));
-
-            string alloc = AllocateTemporaryVariable();
-
-            executable.InstructionsInternal.Add(new Instruction(OpCode.MOV, Operand.Variable(alloc), Operand.Variable(identifier)));
-
-            variables[identifier] = true;
-
-            ArrayList array = new ArrayList();
-
-            ReadLeftBrace();
-
-            int i = 0;
-
-            while (true)
-            {
-
-                Token tok = ReadToken();
-
-                if (tok.Type == TokenType.RightBrace)
-                {
-
-                    UndoToken();
-                    break;
-
-                }
-
-                if (LookAhead().Type == TokenType.RightBrace)
-                {
-
-                    executable.InstructionsInternal.Add(new Instruction(OpCode.ADD, Operand.CreatePointer(identifier, (string)tok.Lexeme), Operand.Literal(i)));
-                    array.Add(tok.Lexeme, i);
-                    break;
-
-                }
-                else
-                {
-
-                    executable.InstructionsInternal.Add(new Instruction(OpCode.ADD, Operand.CreatePointer(identifier, (string)tok.Lexeme), Operand.Literal(i)));
-
-                    array.Add(tok.Lexeme, i);
-
-                }
-
-                if (LookAhead().Type == TokenType.RightBrace)
-                    break;
-
-                ReadComma();
-
-                i++;
-
-            }
-
-            ReadRightBrace();
-
-            executable.ScriptMemory[identifier] = array;
-
-            FreeFunctionFrame();
-
-            return new Variable(identifier, Scope.Local, typeof(ArrayList));
-
-        }
-        
-        /// <summary>
         /// 
         /// </summary>
         private void LocalVariableDeclaration()
@@ -1895,6 +1716,122 @@ namespace ScriptStack.Compiler
         }
 
         /// <summary>
+        /// Bitwise AND '&'
+        ///
+        /// Precedence (high -> low):
+        ///   ! (logical NOT)
+        ///   &
+        ///   ^
+        ///   |
+        ///   &&
+        ///   ||
+        ///
+        /// This mirrors common C-like precedence and keeps bitwise ops above logical ops.
+        /// </summary>
+        private Variable BitwiseAnd()
+        {
+
+            List<Instruction> instructions = executable.InstructionsInternal;
+
+            Variable first = Not();
+
+            while (true)
+            {
+
+                Token token = ReadToken();
+
+                if (token.Type == TokenType.BinaryAnd)
+                {
+
+                    Variable second = Not();
+
+                    instructions.Add(new Instruction(OpCode.ANDB, Operand.Variable(first.name), Operand.Variable(second.name)));
+
+                    // Bitwise ops currently work on int in the runtime
+                    first.derivatedType = typeof(int);
+
+                    continue;
+
+                }
+
+                UndoToken();
+                return first;
+
+            }
+
+        }
+
+        /// <summary>
+        /// Bitwise XOR '^'
+        /// </summary>
+        private Variable BitwiseXor()
+        {
+
+            List<Instruction> instructions = executable.InstructionsInternal;
+
+            Variable first = BitwiseAnd();
+
+            while (true)
+            {
+
+                Token token = ReadToken();
+
+                if (token.Type == TokenType.Xor)
+                {
+
+                    Variable second = BitwiseAnd();
+
+                    instructions.Add(new Instruction(OpCode.XOR, Operand.Variable(first.name), Operand.Variable(second.name)));
+
+                    first.derivatedType = typeof(int);
+
+                    continue;
+
+                }
+
+                UndoToken();
+                return first;
+
+            }
+
+        }
+
+        /// <summary>
+        /// Bitwise OR '|'
+        /// </summary>
+        private Variable BitwiseOr()
+        {
+
+            List<Instruction> instructions = executable.InstructionsInternal;
+
+            Variable first = BitwiseXor();
+
+            while (true)
+            {
+
+                Token token = ReadToken();
+
+                if (token.Type == TokenType.BinaryOr)
+                {
+
+                    Variable second = BitwiseXor();
+
+                    instructions.Add(new Instruction(OpCode.ORB, Operand.Variable(first.name), Operand.Variable(second.name)));
+
+                    first.derivatedType = typeof(int);
+
+                    continue;
+
+                }
+
+                UndoToken();
+                return first;
+
+            }
+
+        }
+
+        /// <summary>
         /// Conjunction 
         /// 
         /// Check for proposition (a signed atom)
@@ -1905,7 +1842,7 @@ namespace ScriptStack.Compiler
 
             List<Instruction> instructions = executable.InstructionsInternal;
 
-            Variable first = Not();
+            Variable first = BitwiseOr();
             
             while (true)
             {
@@ -1915,28 +1852,20 @@ namespace ScriptStack.Compiler
                 if (token.Type == TokenType.And)
                 {
 
-                    Variable second = Not();
+                    Variable second = BitwiseOr();
 
                     instructions.Add(new Instruction(OpCode.AND, Operand.Variable(first.name), Operand.Variable(second.name)));
 
                     first.derivatedType = Derivate(token, first.derivatedType, second.derivatedType);
 
-                    break;
+                    continue;
 
                 }
 
-                else
-                {
-
-                    UndoToken();
-
-                    return first;
-
-                }
+                UndoToken();
+                return first;
 
             }
-
-            return first;
 
         }
 
@@ -1963,26 +1892,18 @@ namespace ScriptStack.Compiler
 
                     Variable second = And();
 
-                    instructions.Add( new Instruction(OpCode.OR, Operand.Variable(first.name), Operand.Variable(second.name)));
+                    instructions.Add(new Instruction(OpCode.OR, Operand.Variable(first.name), Operand.Variable(second.name)));
 
                     first.derivatedType = Derivate(token, first.derivatedType, second.derivatedType);
 
-                    break;
+                    continue;
 
                 }
 
-                else
-                {
-
-                    UndoToken();
-
-                    return first;
-
-                }
+                UndoToken();
+                return first;
 
             }
-
-            return first;
 
         }
 
@@ -2418,7 +2339,7 @@ namespace ScriptStack.Compiler
 
             Instruction end = new Instruction(OpCode.NOP);
 
-            executable.InstructionsInternal.Add(new Instruction(OpCode.JNZ, Operand.Variable(condition.name), Operand.AllocateInstructionPointer(start)));
+            executable.InstructionsInternal.Add(new Instruction(OpCode.JZ, Operand.Variable(condition.name), Operand.AllocateInstructionPointer(start)));
 
             StatementList();
 
@@ -2464,7 +2385,7 @@ namespace ScriptStack.Compiler
 
             Instruction end = new Instruction(OpCode.NOP);
 
-            executable.InstructionsInternal.Add(new Instruction(OpCode.JNZ, Operand.Variable(condition.name), Operand.AllocateInstructionPointer(end)));
+            executable.InstructionsInternal.Add(new Instruction(OpCode.JZ, Operand.Variable(condition.name), Operand.AllocateInstructionPointer(end)));
 
             LoopControl loopControl = new LoopControl();
 
@@ -2567,7 +2488,7 @@ namespace ScriptStack.Compiler
 
             Instruction end = new Instruction(OpCode.NOP);
 
-            executable.InstructionsInternal.Add(new Instruction(OpCode.JNZ, Operand.Variable(condition.name), Operand.AllocateInstructionPointer(end)));
+            executable.InstructionsInternal.Add(new Instruction(OpCode.JZ, Operand.Variable(condition.name), Operand.AllocateInstructionPointer(end)));
 
             LoopControl loopControl = new LoopControl();
 
@@ -2654,7 +2575,7 @@ namespace ScriptStack.Compiler
 
             Instruction end = new Instruction(OpCode.NOP);
 
-            executable.InstructionsInternal.Add(new Instruction(OpCode.JZ, Operand.Variable(identifier), Operand.AllocateInstructionPointer(end)));
+            executable.InstructionsInternal.Add(new Instruction(OpCode.JNZ, Operand.Variable(identifier), Operand.AllocateInstructionPointer(end)));
 
             executable.InstructionsInternal.Add(new Instruction(OpCode.MOV, Operand.Variable(val), Operand.CreatePointer(array.name, key)));
 
@@ -2779,7 +2700,7 @@ namespace ScriptStack.Compiler
                 {
                     Instruction switchInstruction = new Instruction(OpCode.NOP);
 
-                    executable.InstructionsInternal.Add(new Instruction(OpCode.JNZ, Operand.Variable(tmpIdentifier), Operand.AllocateInstructionPointer(switchInstruction)));
+                    executable.InstructionsInternal.Add(new Instruction(OpCode.JZ, Operand.Variable(tmpIdentifier), Operand.AllocateInstructionPointer(switchInstruction)));
 
                     Statement();
 
@@ -3287,12 +3208,6 @@ namespace ScriptStack.Compiler
 
                 if (token.Type == TokenType.Shared || token.Type == TokenType.Var)
                     VariableDeclaration();
-
-                else if (token.Type == TokenType.Struct)
-                    StructDeclaration();
-
-                else if (token.Type == TokenType.Enum)
-                    EnumDeclaration();
 
                 else
                     break;
