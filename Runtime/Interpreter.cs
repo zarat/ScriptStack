@@ -47,11 +47,45 @@ namespace ScriptStack.Runtime
         private bool interrupted;
         private bool finished;
 
+        private RuntimeBinder binder;
+
         #endregion
 
         #region Private Methods
 
         private Host host;
+
+        private ScriptArray EnsureArray(string identifier, object container)
+        {
+            if (container is ScriptArray a)
+                return a;
+
+            // Allow host to pass a plain List<object>
+            if (container is List<object> list)
+            {
+                var a2 = new ScriptArray(list);
+                localMemory[identifier] = a2;
+                return a2;
+            }
+
+            throw new ExecutionException("Das Ziel '" + identifier + "' ist kein Array.");
+        }
+
+        private ScriptObject EnsureObject(string identifier, object container)
+        {
+            if (container is ScriptObject o)
+                return o;
+
+            // Allow host to pass a plain Dictionary<object, object>
+            if (container is Dictionary<object, object> dict)
+            {
+                var o2 = new ScriptObject(dict);
+                localMemory[identifier] = o2;
+                return o2;
+            }
+
+            throw new ExecutionException("Das Ziel '" + identifier + "' ist kein Objekt.");
+        }
 
         // \todo make models accessible like members
         private object Evaluate(Operand operand)
@@ -79,80 +113,19 @@ namespace ScriptStack.Runtime
                  */
                 case OperandType.Member:
 
-                    src = localMemory[(string)operand.Value];
-
-                    if (src.GetType() == typeof(ArrayList))
                     {
+                        string id = (string)operand.Value;
+                        src = localMemory[id];
 
-                        /*
-                         * An array has an internal member "toString"
-                         * \deprecated
-                         */
-                        if ((string)operand.Member == "toString")
-                        {
+                        // Preserve legacy behavior: host may provide raw List<object>/Dictionary<object,object>
+                        // but ScriptStack expects ScriptArray/ScriptObject semantics.
+                        if (src is List<object>)
+                            src = EnsureArray(id, src);
+                        else if (src is Dictionary<object, object>)
+                            src = EnsureObject(id, src);
 
-                            ArrayList array = (ArrayList)src;
-
-                            StringBuilder sb = new StringBuilder();
-
-                            foreach (KeyValuePair<object, object> element in array)
-                            {
-                                sb.Append(element.Value.ToString());
-                            }
-
-                            return sb;
-
-                        }
-
-                        ArrayList associativeArray = (ArrayList)src;
-
-                        object objectValue = associativeArray[operand.Member];
-
-                        return objectValue;
+                        return binder.GetMember(src, operand.Member);
                     }
-
-                    else if (src.GetType() == typeof(string))
-                    {
-
-                        string strSource = (string)src;
-
-                        object objectIndex = operand.Member;
-
-                        if (objectIndex.GetType() == typeof(string))
-                            if (((string)objectIndex) == "length")
-                                return strSource.Length;
-
-                        if (objectIndex.GetType() != typeof(int))
-                            throw new ExecutionException("Ein String ist nur numerisch indexierbar.");
-
-                        return strSource[(int)objectIndex] + "";
-
-                    }
-
-                    // \todo member access test
-                    else
-                    {
-
-                        object objectIndex = operand.Member;
-
-                        object res = false;
-
-                        System.Reflection.MethodInfo method = ((object)src).GetType().GetMethod((string)objectIndex);
-
-                        try
-                        {
-                            res = method.Invoke(src, new object[0]);
-                        }
-                        catch(Exception) {
-                            parameterStack.Push(NullReference.Instance);
-                            return null;
-                        }
-
-                        return res;
-
-                    }                  
-                    
-                    //else throw new ExecutionException("Der Typ '"+ operand.Type + "' kann an dieser Stelle nicht verarbeitet werden.");
 
                 /* 
                  * Arrays can be indexed with a "string" like
@@ -165,33 +138,17 @@ namespace ScriptStack.Runtime
                  */
                 case OperandType.Pointer:
 
-                    src = localMemory[(string)operand.Value];
-
-                    if (src.GetType() == typeof(ArrayList))
                     {
+                        string id = (string)operand.Value;
+                        src = localMemory[id];
 
-                        object objectIndex = localMemory[operand.Pointer];
+                        if (src is List<object>)
+                            src = EnsureArray(id, src);
+                        else if (src is Dictionary<object, object>)
+                            src = EnsureObject(id, src);
 
-                        return ((ArrayList)src)[objectIndex];
-
+                        return binder.GetIndex(src, localMemory[operand.Pointer]);
                     }
-
-                    else if (src.GetType() == typeof(string))
-                    {
-
-                        string strSource = (string)src;
-
-                        object objectIndex = localMemory[operand.Pointer];
-
-                        if (objectIndex.GetType() != typeof(int))
-                            throw new ExecutionException("Ein String ist nur numerisch indexierbar.");
-
-                        return strSource[(int)objectIndex] + "";
-
-                    }
-
-                    else
-                        throw new ExecutionException("Nur Arrays und Strings sind indexierbar.");
 
                 default:
                     throw new ExecutionException("Der Typ '"+ operand.Type + "' kann an dieser Stelle nicht verarbeitet werden.");
@@ -238,8 +195,22 @@ namespace ScriptStack.Runtime
             if (value is string s)
                 return s.Length != 0;
 
-            if (value is ArrayList a)
+            if (value is ScriptArray a)
                 return a.Count != 0;
+
+            if (value is ScriptObject o)
+                return o.Count != 0;
+
+            // host-provided raw collections
+            if (value is List<object> la)
+                return la.Count != 0;
+
+            if (value is Dictionary<object, object> lo)
+                return lo.Count != 0;
+
+            // CLR collections (arrays, lists, dictionaries, ...)
+            if (value is System.Collections.ICollection col)
+                return col.Count != 0;
 
             // Any other object is considered truthy.
             return true;
@@ -265,29 +236,24 @@ namespace ScriptStack.Runtime
 
                 case OperandType.Member:
                 case OperandType.Pointer:
-                    ArrayList array = null;
+                    {
+                        object tmp = localMemory.Exists(identifier) ? localMemory[identifier] : NullReference.Instance;
 
-                    object tmp = null;
+                        // Preserve legacy behavior for host-passed raw containers
+                        if (tmp is List<object>)
+                            tmp = EnsureArray(identifier, tmp);
+                        else if (tmp is Dictionary<object, object>)
+                            tmp = EnsureObject(identifier, tmp);
 
-                    if (localMemory.Exists(identifier))
-                        tmp = localMemory[identifier];
+                        if (dst.Type == OperandType.Member)
+                        {
+                            binder.SetMember(tmp, dst.Member, val);
+                            break;
+                        }
 
-                    else
-                        tmp = NullReference.Instance;
-
-                    if (tmp.GetType() != typeof(ArrayList))
-                        throw new ExecutionException("Das Ziel '" + dst + "' vom Typ '" + tmp.GetType().ToString() + "' ist nicht indexierbar.");
-
-                    else
-                        array = (ArrayList)tmp;
-
-                    if (dst.Type == OperandType.Member)
-                        array[dst.Member] = val;
-
-                    else
-                        array[localMemory[dst.Pointer]] = val;
-
-                    break;
+                        binder.SetIndex(tmp, localMemory[dst.Pointer], val);
+                        break;
+                    }
 
                 case OperandType.Literal:
                     throw new ExecutionException("Einem Literal kann nichts zugewiesen werden.");
@@ -314,34 +280,81 @@ namespace ScriptStack.Runtime
             Type typeDest = objectValueDest.GetType();
             Type typeSource = objectValueSource.GetType();
 
-            // handle array and string concatenation
+            // Special rules for strings, arrays and objects
             if (instruction.OpCode == OpCode.ADD)
             {
-                if (typeDest == typeof(String))
+                if (objectValueDest is string)
                 {
                     Assignment(instruction.First, objectValueDest.ToString() + objectValueSource.ToString());
                     return;
                 }
 
-                if (typeDest == typeof(ArrayList))
+                // arrays: append / concat
+                if (objectValueDest is ScriptArray || objectValueDest is List<object>)
                 {
-                    ((ArrayList)objectValueDest).Add(objectValueSource);
+                    ScriptArray arr = EnsureArray(strIdentifierDest, objectValueDest);
+                    arr.AddScript(objectValueSource);
                     return;
+                }
+
+                // objects: merge (object + object)
+                if (objectValueDest is ScriptObject || objectValueDest is Dictionary<object, object>)
+                {
+                    ScriptObject obj = EnsureObject(strIdentifierDest, objectValueDest);
+
+                    if (objectValueSource is ScriptObject so)
+                    {
+                        obj.MergeFrom(so);
+                        return;
+                    }
+
+                    if (objectValueSource is Dictionary<object, object> sd)
+                    {
+                        obj.MergeFrom(new ScriptObject(sd));
+                        return;
+                    }
+
+                    throw new ExecutionException("Objekte können nur mit Objekten addiert werden.");
                 }
             }
 
-            // handle array and string subtraction
             if (instruction.OpCode == OpCode.SUB)
             {
-                if (typeDest == typeof(String))
+                if (objectValueDest is string)
                 {
                     Assignment(instruction.First,
                         objectValueDest.ToString().Replace(objectValueSource.ToString(), ""));
                     return;
                 }
-                if (typeDest == typeof(ArrayList))
+
+                // arrays: remove values
+                if (objectValueDest is ScriptArray || objectValueDest is List<object>)
                 {
-                    ((ArrayList)objectValueDest).Subtract(objectValueSource);
+                    ScriptArray arr = EnsureArray(strIdentifierDest, objectValueDest);
+                    arr.SubtractScript(objectValueSource);
+                    return;
+                }
+
+                // objects: remove keys
+                if (objectValueDest is ScriptObject || objectValueDest is Dictionary<object, object>)
+                {
+                    ScriptObject obj = EnsureObject(strIdentifierDest, objectValueDest);
+
+                    if (objectValueSource is ScriptObject so)
+                    {
+                        foreach (var k in so.Keys)
+                            obj.Remove(ScriptValue.NormalizeKey(k));
+                        return;
+                    }
+
+                    if (objectValueSource is Dictionary<object, object> sd)
+                    {
+                        foreach (var k in sd.Keys)
+                            obj.Remove(ScriptValue.NormalizeKey(k));
+                        return;
+                    }
+
+                    obj.Remove(ScriptValue.NormalizeKey(objectValueSource));
                     return;
                 }
             }
@@ -700,48 +713,58 @@ namespace ScriptStack.Runtime
 
         }
 
-        private void Iterator(ArrayList array)
+        private void Iterator(ScriptArray array)
         {
-
             if (array.Count == 0)
                 return;
 
             object iterator = Evaluate(instruction.First);
 
-            bool key = false;
+            int nextIndex = 0;
 
-            object next = null;
+            if (iterator is int i)
+                nextIndex = i + 1;
+            else if (iterator == NullReference.Instance || iterator == null)
+                nextIndex = 0;
+            else
+                nextIndex = 0;
 
-            foreach (object tmp in array.Keys)
+            if (nextIndex < array.Count)
+                localMemory[instruction.First.Value.ToString()] = nextIndex;
+            else
+                localMemory[instruction.First.Value.ToString()] = NullReference.Instance;
+        }
+
+        private void Iterator(ScriptObject obj)
+        {
+            if (obj.Count == 0)
+                return;
+
+            object iterator = Evaluate(instruction.First);
+
+            bool found = false;
+            object? next = null;
+
+            foreach (object k in obj.Keys)
             {
-
-                if (key)
+                if (found)
                 {
-                    next = tmp;
+                    next = k;
                     break;
                 }
 
-                if (tmp == iterator)
-                    key = true;
-
+                if (ScriptValue.EqualValues(k, iterator))
+                    found = true;
             }
 
-            if (!key)
+            if (!found)
             {
-
-                Dictionary<object, object>.KeyCollection.Enumerator keys = array.Keys.GetEnumerator();
-
+                var keys = obj.Keys.GetEnumerator();
                 keys.MoveNext();
-
                 next = keys.Current;
-
             }
 
-            if (next == null)
-                next = NullReference.Instance;
-
-            localMemory[instruction.First.Value.ToString()] = next;
-
+            localMemory[instruction.First.Value.ToString()] = ScriptValue.NormalizeKey(next);
         }
 
         private void Iterator(string str)
@@ -824,27 +847,13 @@ namespace ScriptStack.Runtime
             switch (operand.Type)
             {
 
-                case OperandType.Variable:
-                    localMemory[operand.Value.ToString()] = tmp;
-                    break;
-
-                case OperandType.Member:
-                case OperandType.Pointer:
-                    if (localMemory[operand.Value.ToString()].GetType() != typeof(ArrayList))
-                        throw new ExecutionException("Ein 'Array' wurde erwartet.");
-
-                    ArrayList array = (ArrayList)localMemory[operand.Value.ToString()];
-
-                    if (operand.Type == OperandType.Member)
-                        array[operand.Member] = tmp;
-
-                    else
-                        array[localMemory[operand.Pointer]] = tmp;
-
-                    break;
+                case OperandType.Literal:
+                    throw new ExecutionException("Einem Literal kann nichts zugewiesen werden.");
 
                 default:
-                    throw new ExecutionException("Der Typ '" + operand.Type + "' kann an dieser Stelle nicht verarbeitet werden.");
+                    // Handles variables, member access and pointer assignments consistently.
+                    Assignment(operand, tmp);
+                    break;
 
             }
 
@@ -1328,9 +1337,21 @@ namespace ScriptStack.Runtime
             if (instruction.First.Type != OperandType.Variable)
                 throw new ExecutionException("Error in array declaration.");
 
-            ArrayList array = new ArrayList();
+            ScriptArray array = new ScriptArray();
 
             localMemory[instruction.First.Value.ToString()] = array;
+
+        }
+
+        private void DCO()
+        {
+
+            if (instruction.First.Type != OperandType.Variable)
+                throw new ExecutionException("Error in object declaration.");
+
+            ScriptObject obj = new ScriptObject();
+
+            localMemory[instruction.First.Value.ToString()] = obj;
 
         }
 
@@ -1347,16 +1368,42 @@ namespace ScriptStack.Runtime
             if (instruction.Second.Type != OperandType.Variable)
                 throw new ExecutionException("Error in PTR.");
 
-            object enumerable = localMemory[instruction.Second.Value.ToString()];
 
-            if (enumerable.GetType() == typeof(ArrayList))
-                Iterator((ArrayList)enumerable);
+            string enumId = instruction.Second.Value.ToString();
+            object enumerable = localMemory[enumId];
 
-            else if (enumerable.GetType() == typeof(string))
-                Iterator((string)enumerable);
+            // Preserve legacy behavior: host may provide raw List<object>/Dictionary<object,object>
+            if (enumerable is List<object>)
+                enumerable = EnsureArray(enumId, enumerable);
+            else if (enumerable is Dictionary<object, object>)
+                enumerable = EnsureObject(enumId, enumerable);
 
-            else
-                throw new ExecutionException("Error in PTR.");
+            // If it's an IEnumerable but not indexable (no IList/IDictionary), materialize once
+            if (enumerable is System.Collections.IEnumerable en
+                && enumerable is not ScriptArray
+                && enumerable is not ScriptObject
+                && enumerable is not System.Collections.IList
+                && enumerable is not System.Collections.IDictionary
+                && enumerable is not string)
+            {
+                var tmp = new ScriptArray();
+                foreach (var it in en)
+                    tmp.Add(ScriptValue.NormalizeValue(it));
+                enumerable = tmp;
+                localMemory[enumId] = tmp;
+            }
+
+            // Validate type
+            if (enumerable is not ScriptArray
+                && enumerable is not ScriptObject
+                && enumerable is not string
+                && enumerable is not System.Collections.IList
+                && enumerable is not System.Collections.IDictionary)
+                throw new ExecutionException("In ForEach Loops wird ein Array, Objekt, String oder IEnumerable erwartet.");
+
+            object currentKey = Evaluate(instruction.First);
+            object nextKey = binder.NextIteratorKey(enumerable, currentKey);
+            localMemory[instruction.First.Value.ToString()] = nextKey;
 
         }
 
@@ -1656,6 +1703,7 @@ namespace ScriptStack.Runtime
                 case OpCode.DSB: DSB(); break;
                 case OpCode.DB: DB(); break;
                 case OpCode.DC: DC(); break;
+                case OpCode.DCO: DCO(); break;
                 case OpCode.PTR: PTR(); break;
                 
                 case OpCode.CALL: CALL(); break;                
@@ -1683,6 +1731,8 @@ namespace ScriptStack.Runtime
 
             script = function.Executable.Script;
 
+            binder = script.Manager.Binder;
+
             executable = script.Executable;
 
             functionStack = new Stack<FunctionFrame>();
@@ -1702,30 +1752,15 @@ namespace ScriptStack.Runtime
             foreach (object parameter in parameters)
             {
 
-                if (parameter == null)
-                    parameterStack.Push(NullReference.Instance);
-
-                else
+                if (parameter == null || parameter == NullReference.Instance)
                 {
-
-                    Type parameterType = parameter.GetType();
-
-                    if (parameterType == typeof(NullReference))
-                        parameterStack.Push(NullReference.Instance);
-
-                    else if (parameterType == typeof(int)
-                        || parameterType == typeof(float)
-                        || parameterType == typeof(double)
-                        || parameterType == typeof(bool)
-                        || parameterType == typeof(string)
-                        || parameterType == typeof(char)
-                        || parameterType == typeof(ArrayList))
-                        parameterStack.Push(parameter);
-
-                    else
-                        throw new ExecutionException("Der Typ '" + parameterType.Name + "' ist kein generischer Typ.");
-
+                    parameterStack.Push(NullReference.Instance);
+                    continue;
                 }
+
+                // For CLR interop we allow any object on the stack.
+                // Type safety (if desired) should be handled by Routine.Verify() and/or the host.
+                parameterStack.Push(parameter);
 
             }
 

@@ -1142,7 +1142,8 @@ namespace ScriptStack.Compiler
 
             string indexIdentifier = AllocateTemporaryVariable();
 
-            executable.InstructionsInternal.Add(new Instruction(OpCode.DC, Operand.Variable(identifier)));
+            // Object literal
+            executable.InstructionsInternal.Add(new Instruction(OpCode.DCO, Operand.Variable(identifier)));
 
             if (LookAhead().Type != TokenType.RightBrace)
             {
@@ -1203,7 +1204,7 @@ namespace ScriptStack.Compiler
 
             ReadRightBrace();
 
-            return new Variable(identifier, Scope.Local, typeof(ArrayList));
+            return new Variable(identifier, Scope.Local, typeof(ScriptObject));
 
         }
 
@@ -1222,6 +1223,7 @@ namespace ScriptStack.Compiler
 
             string indexIdentifier = AllocateTemporaryVariable();
 
+            // Array literal
             executable.InstructionsInternal.Add(new Instruction(OpCode.DC, Operand.Variable(identifier)));
 
             if (LookAhead().Type != TokenType.RightBracket)
@@ -1248,24 +1250,12 @@ namespace ScriptStack.Compiler
 
                     else if (token.Type == TokenType.Colon)
                     {
-
-                        ReadToken();
-
-                        Variable key = tmp;
-
-                        tmp = Expression();
-
-                        executable.InstructionsInternal.Add(new Instruction(OpCode.MOV, Operand.CreatePointer(identifier, key.name), Operand.Variable(tmp.name)));
-
-                        if(LookAhead().Type == TokenType.RightBracket)
-                            break;
-
-                        ReadComma();
-
+                        // We keep brackets as pure arrays. Use { ... } for objects.
+                        throw new ParserException("In Arrays ([]) sind keine Key-Value Paare erlaubt. Verwende { ... } für Objekte.");
                     }
 
                     else
-                        throw new ParserException( "Ein Comma ',' oder Colon ':' wurde erwartet.");
+                        throw new ParserException( "Ein Comma ',' wurde erwartet.");
 
                 }
 
@@ -1273,7 +1263,7 @@ namespace ScriptStack.Compiler
 
             ReadRightBracket();
 
-            return new Variable(identifier, Scope.Local, typeof(ArrayList));
+            return new Variable(identifier, Scope.Local, typeof(ScriptArray));
 
         }
 
@@ -2211,8 +2201,17 @@ namespace ScriptStack.Compiler
 
             Variable array = Expression();
 
-            if (array.derivatedType != null && array.derivatedType != typeof(ArrayList))
-                throw new ParserException("In ForEach Loops wird ein logischer Ausdruck erwartet.", token);
+            if (array.derivatedType != null)
+            {
+                var t = array.derivatedType;
+                bool ok = t == typeof(ScriptArray)
+                    || t == typeof(ScriptObject)
+                    || t == typeof(string)
+                    || typeof(System.Collections.IEnumerable).IsAssignableFrom(t);
+
+                if (!ok)
+                    throw new ParserException("In ForEach Loops wird ein Array, Objekt, String oder IEnumerable erwartet.", token);
+            }
 
             ReadRightParenthesis();
 

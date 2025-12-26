@@ -27,6 +27,7 @@ namespace ScriptStack
         private Memory sharedMemory;
         private Dictionary<string, Routine> routines;
         private Dictionary<object, Interpreter> locks;
+        private RuntimeBinder binder;
         private bool debug;
         private bool optimize;
 
@@ -59,6 +60,8 @@ namespace ScriptStack
             routines = new Dictionary<string, Routine>();
 
             locks = new Dictionary<object, Interpreter>();
+
+            binder = new RuntimeBinder();
 
             debug = false;
 
@@ -318,6 +321,17 @@ namespace ScriptStack
         public ReadOnlyDictionary<object, Interpreter> ActiveLocks
         {
             get { return new ReadOnlyDictionary<object,Interpreter>(locks); }
+        }
+
+        /// <summary>
+        /// Binding layer used by the interpreter to access CLR objects (properties/fields/indexers,
+        /// IList/IDictionary iteration, ...).
+        ///
+        /// You can tweak its behavior (case-insensitive members, legacy zero-arg method access, ...).
+        /// </summary>
+        public RuntimeBinder Binder
+        {
+            get { return binder; }
         }
 
         #endregion

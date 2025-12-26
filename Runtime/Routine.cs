@@ -94,7 +94,8 @@ namespace ScriptStack.Runtime
                 && type != typeof(decimal)
                 && type != typeof(string)
                 && type != typeof(char)
-                && type != typeof(ArrayList)
+                && type != typeof(ScriptArray)
+                && type != typeof(ScriptObject)
                 )
                 throw new ExecutionException("Der Typ '" + type.Name + "' ist kein generischer Datentyp und es wurden keine Erweiterungen registriert.");
 
@@ -121,8 +122,10 @@ namespace ScriptStack.Runtime
                 tmp = "char";
             else if (type == typeof(string))
                 tmp = "string";
-            else if (type == typeof(ArrayList))
+            else if (type == typeof(ScriptArray))
                 tmp = "array";
+            else if (type == typeof(ScriptObject))
+                tmp = "object";
             else
                 tmp = type.ToString().Replace("System.", "").ToLower();
 

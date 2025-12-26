@@ -40,8 +40,6 @@ namespace ScriptStack.Compiler
                 return "boolean";
             else if (type == typeof(string))
                 return "string";
-            else if (type == typeof(ArrayList))
-                return "array";
             else if (type == typeof(char))
                 return "char";
             else
