@@ -1334,34 +1334,6 @@ namespace ScriptStack.Runtime
 
         }
 
-        private void DCO()
-        {
-            
-            string strIdentifier = null;
-
-            object objectValue = Evaluate(instruction.Second);
-
-            Operand operand = instruction.First;
-
-            switch (operand.Type)
-            {
-
-                case OperandType.Variable:
-                    int res = (int)objectValue ^ (int)localMemory[(string)operand.Value];
-
-                    strIdentifier = operand.Value.ToString();
-
-                    localMemory[strIdentifier] = res;
-
-                    break;
-
-                default:
-                    throw new ExecutionException("Operand type '" + operand.Type + "' not supported by logical LNEG instruction.");
-
-            }
-
-        }
-
         /// <summary>
         /// A pointer in foreach loops
         /// </summary>
@@ -1684,7 +1656,6 @@ namespace ScriptStack.Runtime
                 case OpCode.DSB: DSB(); break;
                 case OpCode.DB: DB(); break;
                 case OpCode.DC: DC(); break;
-                case OpCode.DCO: DCO(); break;
                 case OpCode.PTR: PTR(); break;
                 
                 case OpCode.CALL: CALL(); break;                
