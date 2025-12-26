@@ -66,6 +66,7 @@ namespace ScriptStack.Compiler
             Type typeDouble = typeof(double);
             Type typeBoolean = typeof(bool);
             Type typeString = typeof(string);
+            Type typeArray = typeof(ArrayList);
             Type typeChar = typeof(char);
             
             Dictionary<string, Type> Logic = new Dictionary<string, Type>();
@@ -166,6 +167,7 @@ namespace ScriptStack.Compiler
             Plus[Derivate(null, typeBoolean)] = null;
             Plus[Derivate(null, typeString)] = null;
             Plus[Derivate(null, typeChar)] = null;
+            Plus[Derivate(null, typeArray)] = typeArray;
 
             Plus[Derivate(typeInt, null)] = null;
             Plus[Derivate(typeInt, typeInt)] = typeInt;
@@ -185,8 +187,17 @@ namespace ScriptStack.Compiler
             Plus[Derivate(typeString, typeBoolean)] = typeString;
             Plus[Derivate(typeString, typeString)] = typeString;
             Plus[Derivate(typeString, typeChar)] = typeString;
+            Plus[Derivate(typeString, typeArray)] = typeArray;
             Plus[Derivate(typeString, typeDouble)] = typeString;
 
+            Plus[Derivate(typeArray, null)] = typeArray;
+            Plus[Derivate(typeArray, typeInt)] = typeArray;
+            Plus[Derivate(typeArray, typeFloat)] = typeArray;
+            Plus[Derivate(typeArray, typeBoolean)] = typeArray;
+            Plus[Derivate(typeArray, typeString)] = typeArray;
+            Plus[Derivate(typeArray, typeChar)] = typeArray;
+            Plus[Derivate(typeArray, typeArray)] = typeArray;
+            Plus[Derivate(typeArray, typeDouble)] = typeArray;
 
             Plus[Derivate(typeChar, null)] = typeChar;
             Plus[Derivate(typeChar, typeInt)] = typeChar;
@@ -204,6 +215,7 @@ namespace ScriptStack.Compiler
             Minus[Derivate(null, typeBoolean)] = null;
             Minus[Derivate(null, typeString)] = null;
             Minus[Derivate(null, typeChar)] = null;
+            Minus[Derivate(null, typeArray)] = null;
 
             Minus[Derivate(typeInt, null)] = null;
             Minus[Derivate(typeInt, typeInt)] = typeInt;
@@ -219,6 +231,13 @@ namespace ScriptStack.Compiler
             Minus[Derivate(typeString, typeString)] = typeString;
             Minus[Derivate(typeString, typeChar)] = typeString;
 
+            Minus[Derivate(typeArray, null)] = typeArray;
+            Minus[Derivate(typeArray, typeInt)] = typeArray;
+            Minus[Derivate(typeArray, typeFloat)] = typeArray;
+            Minus[Derivate(typeArray, typeBoolean)] = typeArray;
+            Minus[Derivate(typeArray, typeString)] = typeArray;
+            Minus[Derivate(typeArray, typeChar)] = typeArray;
+            Minus[Derivate(typeArray, typeArray)] = typeArray;
 
             Minus[Derivate(typeChar, null)] = typeChar;
             Minus[Derivate(typeChar, typeInt)] = typeChar;
@@ -252,18 +271,6 @@ namespace ScriptStack.Compiler
             derivates[TokenType.Multiply] = Factor;
             derivates[TokenType.Divide] = Factor;
             derivates[TokenType.Modulo] = Factor;
-
-            // Bitwise operators (currently only supported for int at runtime)
-            // Keep null-derivation permissive, because the language is mostly dynamically typed.
-            Dictionary<string, Type> Bitwise = new Dictionary<string, Type>();
-            Bitwise[Derivate(null, null)] = null;
-            Bitwise[Derivate(null, typeInt)] = null;
-            Bitwise[Derivate(typeInt, null)] = null;
-            Bitwise[Derivate(typeInt, typeInt)] = typeInt;
-
-            derivates[TokenType.BinaryAnd] = Bitwise;
-            derivates[TokenType.Xor] = Bitwise;
-            derivates[TokenType.BinaryOr] = Bitwise;
 
         }
 

@@ -1,10 +1,14 @@
-using System;
-using System.Collections.Generic;
-using System.Collections.ObjectModel;
-using System.Text;
-
 using ScriptStack.Compiler;
 using ScriptStack.Runtime;
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+// CLR Bridge
+using System.Globalization;
+using System.Linq;
+using System.Reflection;
+using System.Text;
 
 namespace ScriptStack.Runtime
 {
@@ -53,7 +57,40 @@ namespace ScriptStack.Runtime
 
         private Host host;
 
-        // \todo make models accessible like members
+        private int ToInt32Bitwise(object value, string opName = "bitwise")
+        {
+            if (value == null) throw new ExecutionException($"Cannot apply {opName} operation to null.");
+            if (value is NullReference) throw new ExecutionException($"Cannot apply {opName} operation to 'null'.");
+
+            Type t = value.GetType();
+
+            try
+            {
+                switch (Type.GetTypeCode(t))
+                {
+                    case TypeCode.Int32: return (int)value;
+                    case TypeCode.Boolean: return ((bool)value) ? 1 : 0;
+                    case TypeCode.Char: return (char)value;
+                    case TypeCode.SByte: return (sbyte)value;
+                    case TypeCode.Byte: return (byte)value;
+                    case TypeCode.Int16: return (short)value;
+                    case TypeCode.UInt16: return (ushort)value;
+                    case TypeCode.UInt32: { uint u = (uint)value; if (u > int.MaxValue) throw new OverflowException(); return (int)u; }
+                    case TypeCode.Int64: { long l = (long)value; if (l < int.MinValue || l > int.MaxValue) throw new OverflowException(); return (int)l; }
+                    case TypeCode.UInt64: { ulong ul = (ulong)value; if (ul > (ulong)int.MaxValue) throw new OverflowException(); return (int)ul; }
+                    case TypeCode.Single: { float f = (float)value; if (float.IsNaN(f) || float.IsInfinity(f) || f < int.MinValue || f > int.MaxValue) throw new OverflowException(); return (int)f; }
+                    case TypeCode.Double: { double d = (double)value; if (double.IsNaN(d) || double.IsInfinity(d) || d < int.MinValue || d > int.MaxValue) throw new OverflowException(); return (int)d; }
+                    case TypeCode.Decimal: return decimal.ToInt32((decimal)value);
+                    default: throw new InvalidCastException();
+                }
+            }
+            catch
+            {
+                throw new ExecutionException($"Values of type '{t.Name}' cannot be used in {opName} operations.");
+            }
+        }
+
+
         private object Evaluate(Operand operand)
         {
 
@@ -129,30 +166,14 @@ namespace ScriptStack.Runtime
 
                     }
 
-                    // \todo member access test
                     else
                     {
+                        src = localMemory[(string)operand.Value];
+                        var memberName = operand.Member?.ToString() ?? "";
+                        return GetClrMemberValue(src, memberName);
+                    }
 
-                        object objectIndex = operand.Member;
-
-                        object res = false;
-
-                        System.Reflection.MethodInfo method = ((object)src).GetType().GetMethod((string)objectIndex);
-
-                        try
-                        {
-                            res = method.Invoke(src, new object[0]);
-                        }
-                        catch(Exception) {
-                            parameterStack.Push(NullReference.Instance);
-                            return null;
-                        }
-
-                        return res;
-
-                    }                  
-                    
-                    //else throw new ExecutionException("Der Typ '"+ operand.Type + "' kann an dieser Stelle nicht verarbeitet werden.");
+                //else throw new ExecutionException("Der Typ '"+ operand.Type + "' kann an dieser Stelle nicht verarbeitet werden.");
 
                 /* 
                  * Arrays can be indexed with a "string" like
@@ -190,59 +211,30 @@ namespace ScriptStack.Runtime
 
                     }
 
+                    else if (src is System.Collections.IList list)
+                    {
+                        object objectIndex = localMemory[operand.Pointer];
+
+                        if (objectIndex.GetType() != typeof(int))
+                            throw new ExecutionException("Ein CLR Array ist nur numerisch indexierbar.");
+
+                        return list[(int)objectIndex] ?? NullReference.Instance;
+                    }
+
                     else
-                        throw new ExecutionException("Nur Arrays und Strings sind indexierbar.");
+                    {
+                        // IDictionary / Indexer-Property
+                        object objectIndex = localMemory[operand.Pointer];
+                        if (TryGetClrIndexedValue(src, objectIndex, out var v))
+                            return v;
+                        throw new ExecutionException("Nur Arrays, Dictionaries und Strings sind indexierbar.");
+                    }
+
 
                 default:
                     throw new ExecutionException("Der Typ '"+ operand.Type + "' kann an dieser Stelle nicht verarbeitet werden.");
 
             }
-
-        }
-
-        /// <summary>
-        /// Convert runtime values to a boolean for conditions and jumps.
-        ///
-        /// The language is dynamically typed, so we treat common "falsy" values as false:
-        /// - null / NULL
-        /// - false
-        /// - numeric 0 (int/float/double/decimal)
-        /// - empty string
-        /// - empty array
-        /// Everything else is considered true.
-        /// </summary>
-        private bool ToBool(object value)
-        {
-
-            if (value == null || value == NullReference.Instance)
-                return false;
-
-            if (value is bool b)
-                return b;
-
-            if (value is int i)
-                return i != 0;
-
-            if (value is long l)
-                return l != 0L;
-
-            if (value is float f)
-                return f != 0.0f;
-
-            if (value is double d)
-                return d != 0.0;
-
-            if (value is decimal m)
-                return m != 0.0m;
-
-            if (value is string s)
-                return s.Length != 0;
-
-            if (value is ArrayList a)
-                return a.Count != 0;
-
-            // Any other object is considered truthy.
-            return true;
 
         }
 
@@ -264,30 +256,41 @@ namespace ScriptStack.Runtime
                     break;
 
                 case OperandType.Member:
+                    {
+                        object target = localMemory.Exists(identifier) ? localMemory[identifier] : NullReference.Instance;
+
+                        if (target is ArrayList arr)
+                        {
+                            arr[dst.Member] = val;
+                            break;
+                        }
+
+                        // NEU: C# Objekt Member setzen
+                        SetClrMemberValue(target, dst.Member.ToString()!, val);
+                        break;
+                    }
                 case OperandType.Pointer:
-                    ArrayList array = null;
+                    {
+                        object container = localMemory.Exists(identifier) ? localMemory[identifier] : NullReference.Instance;
+                        object key = localMemory[dst.Pointer];
 
-                    object tmp = null;
+                        // ScriptStack Array
+                        if (container is ArrayList arr)
+                        {
+                            arr[key] = val;
+                            break;
+                        }
 
-                    if (localMemory.Exists(identifier))
-                        tmp = localMemory[identifier];
+                        // Strings are read-only in this language
+                        if (container is string)
+                            throw new ExecutionException("Ein String ist nicht schreibbar.");
 
-                    else
-                        tmp = NullReference.Instance;
+                        // CLR arrays / lists / dictionaries / indexers
+                        if (TrySetClrIndexedValue(container, key, val))
+                            break;
 
-                    if (tmp.GetType() != typeof(ArrayList))
-                        throw new ExecutionException("Das Ziel '" + dst + "' vom Typ '" + tmp.GetType().ToString() + "' ist nicht indexierbar.");
-
-                    else
-                        array = (ArrayList)tmp;
-
-                    if (dst.Type == OperandType.Member)
-                        array[dst.Member] = val;
-
-                    else
-                        array[localMemory[dst.Pointer]] = val;
-
-                    break;
+                        throw new ExecutionException($"Das Ziel '{dst}' vom Typ '{container?.GetType().FullName}' ist nicht indexierbar.");
+                    }
 
                 case OperandType.Literal:
                     throw new ExecutionException("Einem Literal kann nichts zugewiesen werden.");
@@ -591,6 +594,58 @@ namespace ScriptStack.Runtime
 
             }
 
+            // NEW: CLR/object support while preserving ScriptStack numeric semantics
+            bool numericDest =
+                typeDest == typeof(int) ||
+                typeDest == typeof(float) ||
+                typeDest == typeof(double) ||
+                typeDest == typeof(char);
+
+            bool numericSource =
+                typeSource == typeof(int) ||
+                typeSource == typeof(float) ||
+                typeSource == typeof(double) ||
+                typeSource == typeof(char);
+
+            // Equality/inequality for arbitrary CLR objects (and ScriptStack objects),
+            // BUT keep the old numeric cross-type behaviour (int == float etc.)
+            if ((instruction.OpCode == OpCode.CEQ || instruction.OpCode == OpCode.CNE) && !(numericDest && numericSource))
+            {
+                bool eq = Equals(ScriptNullToClr(dst), ScriptNullToClr(src));
+                result = (instruction.OpCode == OpCode.CEQ) ? eq : !eq;
+                Assignment(instruction.First, result);
+                return;
+            }
+
+            // Ordering comparisons for arbitrary CLR objects via IComparable,
+            // again only when we are NOT in the numeric fast-path.
+            if (!(numericDest && numericSource) &&
+                (instruction.OpCode == OpCode.CG || instruction.OpCode == OpCode.CGE || instruction.OpCode == OpCode.CL || instruction.OpCode == OpCode.CLE) &&
+                dst is IComparable cmpDst)
+            {
+                int cmp;
+                try
+                {
+                    cmp = cmpDst.CompareTo(ScriptNullToClr(src));
+                }
+                catch
+                {
+                    // last resort: string compare
+                    cmp = string.Compare(dst.ToString(), src.ToString(), StringComparison.Ordinal);
+                }
+
+                switch (instruction.OpCode)
+                {
+                    case OpCode.CG:  result = cmp > 0; break;
+                    case OpCode.CGE: result = cmp >= 0; break;
+                    case OpCode.CL:  result = cmp < 0; break;
+                    case OpCode.CLE: result = cmp <= 0; break;
+                }
+
+                Assignment(instruction.First, result);
+                return;
+            }
+
             double dstVal = 0.0;
 
             double srcVal = 0.0;
@@ -675,10 +730,34 @@ namespace ScriptStack.Runtime
 
             object src = Evaluate(instruction.Second);
 
+            Type typeDest = dst.GetType();
+
+            Type typeSource = src.GetType();
+
             bool result = false;
 
-            bool dstVal = ToBool(dst);
-            bool srcVal = ToBool(src);
+            bool dstVal = false; 
+
+            bool srcVal = false; 
+
+            if (typeSource == typeof(bool))
+                srcVal = (bool)src;
+
+            else if (typeSource == typeof(NullReference))
+                srcVal = false;
+
+            else
+                srcVal = ((double)src != 0.0) ? true : false;
+
+
+            if (typeDest == typeof(bool))
+                dstVal = (bool)dst;
+
+            else if (typeDest == typeof(NullReference))
+                dstVal = false;
+
+            else
+                dstVal = ((double)dst != 0.0) ? true : false;
 
             switch (instruction.OpCode)
             {
@@ -721,7 +800,7 @@ namespace ScriptStack.Runtime
                     break;
                 }
 
-                if (tmp == iterator)
+                if (Equals(tmp, iterator))
                     key = true;
 
             }
@@ -743,6 +822,47 @@ namespace ScriptStack.Runtime
             localMemory[instruction.First.Value.ToString()] = next;
 
         }
+
+        private void Iterator(IDictionary dict)
+        {
+
+            if (dict.Count == 0)
+                return;
+
+            object iterator = Evaluate(instruction.First);
+
+            bool found = false;
+
+            object next = null;
+
+            foreach (object tmp in dict.Keys)
+            {
+
+                if (found)
+                {
+                    next = tmp;
+                    break;
+                }
+
+                if (Equals(tmp, iterator))
+                    found = true;
+
+            }
+
+            if (!found)
+            {
+                IDictionaryEnumerator en = dict.GetEnumerator();
+                if (en.MoveNext())
+                    next = en.Key;
+            }
+
+            if (next == null)
+                next = NullReference.Instance;
+
+            localMemory[instruction.First.Value.ToString()] = next;
+
+        }
+
 
         private void Iterator(string str)
         {
@@ -821,32 +941,8 @@ namespace ScriptStack.Runtime
 
             Operand operand = instruction.First;
 
-            switch (operand.Type)
-            {
-
-                case OperandType.Variable:
-                    localMemory[operand.Value.ToString()] = tmp;
-                    break;
-
-                case OperandType.Member:
-                case OperandType.Pointer:
-                    if (localMemory[operand.Value.ToString()].GetType() != typeof(ArrayList))
-                        throw new ExecutionException("Ein 'Array' wurde erwartet.");
-
-                    ArrayList array = (ArrayList)localMemory[operand.Value.ToString()];
-
-                    if (operand.Type == OperandType.Member)
-                        array[operand.Member] = tmp;
-
-                    else
-                        array[localMemory[operand.Pointer]] = tmp;
-
-                    break;
-
-                default:
-                    throw new ExecutionException("Der Typ '" + operand.Type + "' kann an dieser Stelle nicht verarbeitet werden.");
-
-            }
+            // Delegate to the unified Assignment() so Member/Pointer also work for CLR objects.
+            Assignment(operand, tmp);
 
         }
 
@@ -1174,7 +1270,8 @@ namespace ScriptStack.Runtime
             {
 
                 case OperandType.Variable:
-                    int res = (int)val | (int)localMemory[(string)operand.Value];
+                    //int res = (int)val | (int)localMemory[(string)operand.Value];
+                    int res = ToInt32Bitwise(localMemory[(string)operand.Value], "|") | ToInt32Bitwise(val, "|");
 
                     identifier = operand.Value.ToString();
 
@@ -1202,7 +1299,8 @@ namespace ScriptStack.Runtime
             {
 
                 case OperandType.Variable:
-                    int res = (int)localMemory[(string)operand.Value] & (int)val;
+                    //int res = (int)localMemory[(string)operand.Value] & (int)val;
+                    int res = ToInt32Bitwise(localMemory[(string)operand.Value], "&") & ToInt32Bitwise(val, "&");
 
                     identifier = operand.Value.ToString();
 
@@ -1247,7 +1345,8 @@ namespace ScriptStack.Runtime
             {
 
                 case OperandType.Variable:
-                    int res = (int)val ^ (int)localMemory[(string)operand.Value];
+                    //int res = (int)val ^ (int)localMemory[(string)operand.Value];
+                    int res = ToInt32Bitwise(localMemory[(string)operand.Value], "^") ^ ToInt32Bitwise(val, "^");
 
                     identifier = operand.Value.ToString();
 
@@ -1280,7 +1379,7 @@ namespace ScriptStack.Runtime
         private void JZ()
         {
 
-            if (!ToBool(Evaluate(instruction.First)))
+            if ((bool)Evaluate(instruction.First))
                 return;
 
             Instruction target = instruction.Second.InstructionPointer;
@@ -1296,8 +1395,8 @@ namespace ScriptStack.Runtime
         /// </summary>
         private void JNZ()
         {
-
-            if (ToBool(Evaluate(instruction.First)))
+ 
+            if (!(bool)Evaluate(instruction.First))
                 return;
 
             FunctionFrame frame = functionStack.Peek();
@@ -1334,6 +1433,34 @@ namespace ScriptStack.Runtime
 
         }
 
+        private void DCO()
+        {
+            
+            string strIdentifier = null;
+
+            object objectValue = Evaluate(instruction.Second);
+
+            Operand operand = instruction.First;
+
+            switch (operand.Type)
+            {
+
+                case OperandType.Variable:
+                    int res = (int)objectValue ^ (int)localMemory[(string)operand.Value];
+
+                    strIdentifier = operand.Value.ToString();
+
+                    localMemory[strIdentifier] = res;
+
+                    break;
+
+                default:
+                    throw new ExecutionException("Operand type '" + operand.Type + "' not supported by logical LNEG instruction.");
+
+            }
+
+        }
+
         /// <summary>
         /// A pointer in foreach loops
         /// </summary>
@@ -1347,16 +1474,49 @@ namespace ScriptStack.Runtime
             if (instruction.Second.Type != OperandType.Variable)
                 throw new ExecutionException("Error in PTR.");
 
-            object enumerable = localMemory[instruction.Second.Value.ToString()];
+            string enumerableVar = instruction.Second.Value.ToString();
+            object enumerable = localMemory[enumerableVar];
 
-            if (enumerable.GetType() == typeof(ArrayList))
-                Iterator((ArrayList)enumerable);
+            if (enumerable is ArrayList a)
+            {
+                Iterator(a);
+                return;
+            }
 
-            else if (enumerable.GetType() == typeof(string))
-                Iterator((string)enumerable);
+            if (enumerable is string s)
+            {
+                Iterator(s);
+                return;
+            }
 
-            else
-                throw new ExecutionException("Error in PTR.");
+            if (enumerable is IList list)
+            {
+                Iterator(list);
+                return;
+            }
+
+
+            if (enumerable is IDictionary dict)
+            {
+                Iterator(dict);
+                return;
+            }
+
+            // Any other IEnumerable (e.g. HashSet, IEnumerable<T>, LINQ results)
+            if (enumerable is IEnumerable en)
+            {
+                var materialized = new ArrayList();
+                foreach (var item in en)
+                    materialized.Add(item ?? NullReference.Instance);
+
+                // Replace variable with materialized ArrayList so the existing foreach bytecode
+                // (which indexes via array[key]) keeps working.
+                localMemory[enumerableVar] = materialized;
+                Iterator(materialized);
+                return;
+            }
+
+            throw new ExecutionException("Error in PTR.");
 
         }
 
@@ -1434,6 +1594,53 @@ namespace ScriptStack.Runtime
                 objectResult = NullReference.Instance;
 
             parameterStack.Push(objectResult);
+
+            if (interrupt)
+                interrupted = true;
+
+        }
+
+        /// <summary>
+        /// Invoke a CLR instance method via reflection.
+        ///
+        /// The compiler lowers <code>obj.Method(a, b)</code> into:
+        /// PUSH a; PUSH b; MIV obj.Method, <argc>; POP result
+        /// </summary>
+        private void MIV()
+        {
+
+            if (instruction.First.Type != OperandType.Member)
+                throw new ExecutionException("Error in MIV.");
+
+            string targetIdentifier = instruction.First.Value.ToString();
+            string methodName = instruction.First.Member?.ToString() ?? "";
+
+            int argc = 0;
+            if (instruction.Second != null)
+            {
+                object raw = instruction.Second.Value;
+                if (raw is int i) argc = i;
+                else if (raw is string s && int.TryParse(s, out var j)) argc = j;
+                else throw new ExecutionException("Error in MIV.");
+            }
+
+            object target = localMemory[targetIdentifier];
+            if (target == null || target is NullReference)
+            {
+                parameterStack.Push(NullReference.Instance);
+                return;
+            }
+
+            // Collect args (preserve order)
+            List<object> args = new List<object>(argc);
+            for (int i = 0; i < argc; i++)
+                args.Insert(0, parameterStack.Pop());
+
+            object result = InvokeClrMethod(target, methodName, args);
+            if (result == null)
+                result = NullReference.Instance;
+
+            parameterStack.Push(result);
 
             if (interrupt)
                 interrupted = true;
@@ -1656,10 +1863,12 @@ namespace ScriptStack.Runtime
                 case OpCode.DSB: DSB(); break;
                 case OpCode.DB: DB(); break;
                 case OpCode.DC: DC(); break;
+                case OpCode.DCO: DCO(); break;
                 case OpCode.PTR: PTR(); break;
                 
                 case OpCode.CALL: CALL(); break;                
                 case OpCode.INV: INV(); break;
+                case OpCode.MIV: MIV(); break;
                 case OpCode.RUN: RUN(); break;
 
                 case OpCode.LOCK: LOCK(); break;
@@ -1925,6 +2134,556 @@ namespace ScriptStack.Runtime
         {
             get { return host; }
             set { host = value; }
+        }
+
+        #endregion
+
+        #region CLR Bridge
+
+        private static readonly BindingFlags ClrMemberFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase;
+
+        private static object ScriptNullToClr(object v) => v is NullReference ? null : v;
+
+        private static object CoerceTo(object value, Type targetType)
+        {
+            value = ScriptNullToClr(value);
+
+            // Handle Nullable<T>
+            var underlyingNullable = Nullable.GetUnderlyingType(targetType);
+            if (underlyingNullable != null)
+                targetType = underlyingNullable;
+
+            if (value == null)
+            {
+                // null für ValueTypes nicht erlaubt -> Default
+                return targetType.IsValueType ? Activator.CreateInstance(targetType)! : null!;
+            }
+
+            var srcType = value.GetType();
+            if (targetType.IsAssignableFrom(srcType))
+                return value;
+
+            // --- ScriptStack ArrayList -> CLR types ---
+            if (value is ArrayList scriptArr)
+            {
+                // CLR Array (e.g. int[])
+                if (targetType.IsArray)
+                {
+                    var elemType = targetType.GetElementType()!;
+                    return ConvertScriptArrayListToClrArray(scriptArr, elemType);
+                }
+
+                // Generic collections (List<T>, ICollection<T>, IEnumerable<T>, etc.)
+                if (TryConvertScriptArrayListToGenericCollection(scriptArr, targetType, out var coll))
+                    return coll;
+
+                // Generic dictionaries (Dictionary<TKey,TValue>, IDictionary<TKey,TValue>)
+                if (TryConvertScriptArrayListToGenericDictionary(scriptArr, targetType, out var dict))
+                    return dict;
+            }
+
+            // Enum conversions
+            if (targetType.IsEnum)
+                return Enum.Parse(targetType, value.ToString()!, ignoreCase: true);
+
+            // numeric / string conversions etc.
+            if (value is IConvertible)
+                return Convert.ChangeType(value, targetType, CultureInfo.InvariantCulture);
+
+            // last resort: keep as-is (Reflection may still accept via implicit operators)
+            return value;
+        }
+
+        private static object ConvertScriptArrayListToClrArray(ArrayList scriptArr, Type elementType)
+        {
+            // We only support list-like arrays here: integer keys, 0..n-1 (no gaps).
+            // Anything associative should be mapped to dictionaries instead.
+            if (scriptArr.Count == 0)
+                return Array.CreateInstance(elementType, 0);
+
+            // ensure all keys are ints
+            var keys = new List<int>(scriptArr.Count);
+            foreach (var k in scriptArr.Keys)
+            {
+                if (k is int i)
+                    keys.Add(i);
+                else
+                    throw new ExecutionException($"Associatives Array kann nicht zu '{elementType.Name}[]' konvertiert werden (Key-Typ: {k?.GetType().Name ?? "null"}).");
+            }
+
+            keys.Sort();
+            for (int i = 0; i < keys.Count; i++)
+            {
+                if (keys[i] != i)
+                    throw new ExecutionException($"Array kann nicht zu '{elementType.Name}[]' konvertiert werden: Keys müssen 0..n-1 ohne Lücken sein.");
+            }
+
+            var arr = Array.CreateInstance(elementType, keys.Count);
+            for (int i = 0; i < keys.Count; i++)
+            {
+                var v = scriptArr[i]; // uses our indexer: returns NullReference.Instance if missing
+                var coerced = CoerceTo(v, elementType);
+                arr.SetValue(coerced, i);
+            }
+            return arr;
+        }
+
+        private static Type GetGenericInterface(Type type, Type genericDefinition)
+        {
+            if (type.IsInterface && type.IsGenericType && type.GetGenericTypeDefinition() == genericDefinition)
+                return type;
+
+            return type.GetInterfaces()
+                .FirstOrDefault(i => i.IsGenericType && i.GetGenericTypeDefinition() == genericDefinition);
+        }
+
+        private static bool TryConvertScriptArrayListToGenericCollection(ArrayList scriptArr, Type targetType, out object collection)
+        {
+            collection = null;
+
+            var iface = GetGenericInterface(targetType, typeof(ICollection<>))
+                     ?? GetGenericInterface(targetType, typeof(IList<>))
+                     ?? GetGenericInterface(targetType, typeof(IEnumerable<>))
+                     ?? GetGenericInterface(targetType, typeof(IReadOnlyCollection<>))
+                     ?? GetGenericInterface(targetType, typeof(IReadOnlyList<>));
+
+            if (iface == null)
+                return false;
+
+            var elemType = iface.GetGenericArguments()[0];
+
+            // Choose concrete type
+            Type concrete = targetType;
+            if (targetType.IsInterface || targetType.IsAbstract)
+                concrete = typeof(List<>).MakeGenericType(elemType);
+
+            object instance;
+            try
+            {
+                instance = Activator.CreateInstance(concrete)!;
+            }
+            catch
+            {
+                // If the target type is non-instantiable, fallback to List<T>
+                instance = Activator.CreateInstance(typeof(List<>).MakeGenericType(elemType))!;
+                concrete = instance.GetType();
+            }
+
+            // Find Add(T)
+            var add = concrete.GetMethod("Add", new[] { elemType })
+                   ?? concrete.GetMethods().FirstOrDefault(m => m.Name == "Add" && m.GetParameters().Length == 1);
+
+            if (add == null)
+                return false;
+
+            // Add items in key order (int keys). If there are non-int keys, refuse.
+            var intKeys = new List<int>();
+            foreach (var k in scriptArr.Keys)
+            {
+                if (k is int i) intKeys.Add(i);
+                else return false;
+            }
+            intKeys.Sort();
+
+            foreach (var k in intKeys)
+            {
+                var v = scriptArr[k];
+                var coerced = CoerceTo(v, elemType);
+                add.Invoke(instance, new[] { coerced });
+            }
+
+            collection = instance;
+            return true;
+        }
+
+        private static bool TryConvertScriptArrayListToGenericDictionary(ArrayList scriptArr, Type targetType, out object dict)
+        {
+            dict = null;
+
+            var iface = GetGenericInterface(targetType, typeof(IDictionary<,>));
+            if (iface == null)
+                return false;
+
+            var ga = iface.GetGenericArguments();
+            var keyType = ga[0];
+            var valType = ga[1];
+
+            Type concrete = targetType;
+            if (targetType.IsInterface || targetType.IsAbstract)
+                concrete = typeof(Dictionary<,>).MakeGenericType(keyType, valType);
+
+            object instance;
+            try
+            {
+                instance = Activator.CreateInstance(concrete)!;
+            }
+            catch
+            {
+                instance = Activator.CreateInstance(typeof(Dictionary<,>).MakeGenericType(keyType, valType))!;
+                concrete = instance.GetType();
+            }
+
+            var add = concrete.GetMethod("Add", new[] { keyType, valType })
+                   ?? concrete.GetMethods().FirstOrDefault(m => m.Name == "Add" && m.GetParameters().Length == 2);
+
+            if (add == null)
+                return false;
+
+            foreach (var k in scriptArr.Keys)
+            {
+                var v = scriptArr[k];
+                var ck = CoerceTo(k, keyType);
+                var cv = CoerceTo(v, valType);
+                add.Invoke(instance, new[] { ck, cv });
+            }
+
+            dict = instance;
+            return true;
+        }
+
+
+        private static object GetClrMemberValue(object target, string memberName)
+        {
+            if (target == null || target is NullReference)
+                return NullReference.Instance;
+
+            var t = target.GetType();
+
+            // 1) Field
+            var field = t.GetField(memberName, ClrMemberFlags);
+            if (field != null)
+                return field.GetValue(target) ?? NullReference.Instance;
+
+            // 2) Property
+            var prop = t.GetProperty(memberName, ClrMemberFlags);
+            if (prop != null && prop.CanRead)
+                return prop.GetValue(target) ?? NullReference.Instance;
+
+            // 3) Fallback: parameterlose Methode (dein bisheriges Verhalten)
+            var m = t.GetMethod(memberName, ClrMemberFlags, binder: null, Type.EmptyTypes, modifiers: null);
+            if (m != null)
+                return m.Invoke(target, Array.Empty<object>()) ?? NullReference.Instance;
+
+            return NullReference.Instance;
+        }
+
+        private static void SetClrMemberValue(object target, string memberName, object scriptValue)
+        {
+            if (target == null || target is NullReference)
+                throw new ExecutionException($"Null reference bei Zuweisung auf Member '{memberName}'.");
+
+            var t = target.GetType();
+
+            var field = t.GetField(memberName, ClrMemberFlags);
+            if (field != null)
+            {
+                var coerced = CoerceTo(scriptValue, field.FieldType);
+                field.SetValue(target, coerced);
+                return;
+            }
+
+            var prop = t.GetProperty(memberName, ClrMemberFlags);
+            if (prop != null && prop.CanWrite)
+            {
+                var coerced = CoerceTo(scriptValue, prop.PropertyType);
+                prop.SetValue(target, coerced);
+                return;
+            }
+
+            throw new ExecutionException($"Member '{memberName}' nicht gefunden oder nicht schreibbar auf Typ '{t.FullName}'.");
+        }
+
+        private static bool TryCoerceTo(object value, Type targetType, out object coerced)
+        {
+            try
+            {
+                coerced = CoerceTo(value, targetType);
+                return true;
+            }
+            catch
+            {
+                coerced = null;
+                return false;
+            }
+        }
+
+        private static object InvokeClrMethod(object target, string methodName, List<object> args)
+        {
+            if (target == null || target is NullReference)
+                return NullReference.Instance;
+
+            var t = target.GetType();
+            var flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase;
+
+            var methods = t.GetMethods(flags);
+
+            MethodInfo best = null;
+            object[] bestArgs = null;
+            int bestScore = int.MaxValue;
+
+            foreach (var m in methods)
+            {
+                if (!string.Equals(m.Name, methodName, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var ps = m.GetParameters();
+                if (ps.Length != args.Count)
+                    continue;
+
+                int score = 0;
+                var coercedArgs = new object[ps.Length];
+                bool ok = true;
+
+                for (int i = 0; i < ps.Length; i++)
+                {
+                    var pType = ps[i].ParameterType;
+                    var a = ScriptNullToClr(args[i]);
+
+                    if (a == null)
+                    {
+                        // null passt auf RefTypes/Nullable
+                        if (pType.IsValueType && Nullable.GetUnderlyingType(pType) == null)
+                        {
+                            ok = false;
+                            break;
+                        }
+
+                        coercedArgs[i] = null;
+                        score += 1;
+                        continue;
+                    }
+
+                    var aType = a.GetType();
+
+                    if (pType.IsAssignableFrom(aType))
+                    {
+                        coercedArgs[i] = a;
+                        score += (pType == aType) ? 0 : 1;
+                        continue;
+                    }
+
+                    if (TryCoerceTo(a, pType, out var c))
+                    {
+                        coercedArgs[i] = c;
+                        score += 2;
+                        continue;
+                    }
+
+                    ok = false;
+                    break;
+                }
+
+                if (!ok)
+                    continue;
+
+                if (score < bestScore)
+                {
+                    bestScore = score;
+                    best = m;
+                    bestArgs = coercedArgs;
+                }
+            }
+
+            if (best == null)
+            {
+                throw new ExecutionException($"Methode '{methodName}' mit {args.Count} Parametern nicht gefunden auf Typ '{t.FullName}'.");
+            }
+
+            try
+            {
+                object result = best.Invoke(target, bestArgs);
+                if (best.ReturnType == typeof(void))
+                    return NullReference.Instance;
+
+                return result ?? NullReference.Instance;
+            }
+            catch (TargetInvocationException tie)
+            {
+                // unwrap inner exception for better diagnostics
+                throw new ExecutionException($"Fehler in CLR-Methode '{t.FullName}.{best.Name}': {tie.InnerException?.Message ?? tie.Message}");
+            }
+            catch (Exception ex)
+            {
+                throw new ExecutionException($"Fehler beim Aufruf von CLR-Methode '{t.FullName}.{best.Name}': {ex.Message}");
+            }
+        }
+
+        private static bool TryGetClrIndexedValue(object target, object scriptKey, out object value)
+        {
+            value = NullReference.Instance;
+            if (target == null || target is NullReference)
+                return true;
+
+            // IList / arrays
+            if (target is IList list)
+            {
+                var idxObj = ScriptNullToClr(scriptKey);
+                if (idxObj is int idx)
+                {
+                    value = list[idx] ?? NullReference.Instance;
+                    return true;
+                }
+                return false;
+            }
+
+            // IDictionary
+            if (target is IDictionary dict)
+            {
+                object key = ScriptNullToClr(scriptKey);
+
+                // Try to coerce key to generic TKey if possible (avoids InvalidCastException)
+                var keyType = target.GetType().GetInterfaces()
+                    .FirstOrDefault(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IDictionary<,>))
+                    ?.GetGenericArguments()[0];
+
+                if (keyType != null && TryCoerceTo(key, keyType, out var ck))
+                    key = ck;
+
+                try
+                {
+                    var v = dict[key];
+                    value = v ?? NullReference.Instance;
+                    return true;
+                }
+                catch
+                {
+                    // fall through to indexer reflection
+                }
+            }
+
+            // indexer property (Item[...])
+            var t = target.GetType();
+            foreach (var p in t.GetProperties(ClrMemberFlags))
+            {
+                var ip = p.GetIndexParameters();
+                if (ip.Length != 1 || !p.CanRead)
+                    continue;
+
+                if (!TryCoerceTo(scriptKey, ip[0].ParameterType, out var ck))
+                    continue;
+
+                try
+                {
+                    var v = p.GetValue(target, new object[] { ck });
+                    value = v ?? NullReference.Instance;
+                    return true;
+                }
+                catch
+                {
+                    // try next
+                }
+            }
+
+            return false;
+        }
+
+        private static bool TrySetClrIndexedValue(object target, object scriptKey, object scriptValue)
+        {
+            if (target == null || target is NullReference)
+                return false;
+
+            // IList / arrays
+            if (target is IList list)
+            {
+                var idxObj = ScriptNullToClr(scriptKey);
+                if (idxObj is not int idx)
+                    return false;
+
+                // try to coerce value to element type if we can infer it
+                Type elemType = null;
+                var tt = target.GetType();
+                if (tt.IsArray)
+                    elemType = tt.GetElementType();
+                else
+                {
+                    var gi = tt.GetInterfaces().FirstOrDefault(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IList<>));
+                    if (gi != null) elemType = gi.GetGenericArguments()[0];
+                }
+
+                object v = scriptValue;
+                if (elemType != null && TryCoerceTo(scriptValue, elemType, out var cv))
+                    v = cv;
+
+                list[idx] = ScriptNullToClr(v);
+                return true;
+            }
+
+            // IDictionary
+            if (target is IDictionary dict)
+            {
+                object key = ScriptNullToClr(scriptKey);
+                object val = ScriptNullToClr(scriptValue);
+
+                var iface = target.GetType().GetInterfaces()
+                    .FirstOrDefault(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IDictionary<,>));
+                if (iface != null)
+                {
+                    var ga = iface.GetGenericArguments();
+                    var keyType = ga[0];
+                    var valType = ga[1];
+                    if (TryCoerceTo(key, keyType, out var ck)) key = ck;
+                    if (TryCoerceTo(val, valType, out var cv)) val = cv;
+                }
+
+                try
+                {
+                    dict[key] = val;
+                    return true;
+                }
+                catch
+                {
+                    // fall through to indexer reflection
+                }
+            }
+
+            // indexer property (Item[...])
+            var t = target.GetType();
+            foreach (var p in t.GetProperties(ClrMemberFlags))
+            {
+                var ip = p.GetIndexParameters();
+                if (ip.Length != 1 || !p.CanWrite)
+                    continue;
+
+                if (!TryCoerceTo(scriptKey, ip[0].ParameterType, out var ck))
+                    continue;
+
+                object v = scriptValue;
+                if (TryCoerceTo(scriptValue, p.PropertyType, out var cv))
+                    v = cv;
+
+                try
+                {
+                    p.SetValue(target, ScriptNullToClr(v), new object[] { ck });
+                    return true;
+                }
+                catch
+                {
+                    // try next
+                }
+            }
+
+            return false;
+        }
+
+        private void Iterator(IList list)
+        {
+            if (list.Count == 0)
+                return;
+
+            object iterator = Evaluate(instruction.First);
+
+            if (iterator.GetType() != typeof(int))
+            {
+                localMemory[instruction.First.Value.ToString()] = 0;
+                return;
+            }
+
+            int i = (int)iterator;
+
+            if (i < list.Count - 1)
+                localMemory[instruction.First.Value.ToString()] = i + 1;
+            else
+                localMemory[instruction.First.Value.ToString()] = NullReference.Instance;
         }
 
         #endregion

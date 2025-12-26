@@ -800,6 +800,122 @@ namespace ScriptStack.Compiler
         }
 
         /// <summary>
+        /// Mixed access chain parser.
+        ///
+        /// Supports combinations of member and index access in arbitrary order, e.g.
+        ///
+        /// <code>
+        /// obj.pets[0].name
+        /// pets[0].name
+        /// obj.map["x"].y[1]
+        /// </code>
+        ///
+        /// The implementation lowers each postfix operation into a MOV into a
+        /// temporary variable, so the runtime only needs to support OperandType.Member
+        /// and OperandType.Pointer.
+        /// </summary>
+        private Variable AccessChain()
+        {
+
+            string identifier = ReadIdentifier();
+
+            // We only get here if the next token is '[' or '.'
+            string tmp = null;
+
+            while (true)
+            {
+
+                if (LookAhead().Type == TokenType.LeftBracket)
+                {
+
+                    ReadLeftBracket();
+
+                    Variable index = Expression();
+
+                    ReadRightBracket();
+
+                    tmp = AllocateTemporaryVariable();
+
+                    executable.InstructionsInternal.Add(
+                        new Instruction(OpCode.MOV,
+                            Operand.Variable(tmp),
+                            Operand.CreatePointer(identifier, index.name)));
+
+                    identifier = tmp;
+
+                    continue;
+
+                }
+
+                if (LookAhead().Type == TokenType.Period)
+                {
+
+                    ReadPeriod();
+
+                    string member = ReadIdentifier();
+
+                    // Method call on CLR object: obj.Member(...)
+                    // Lowered into: PUSH args..., MIV obj.Member, <argc>, POP tmp
+                    if (LookAhead().Type == TokenType.LeftParen)
+                    {
+
+                        ReadLeftParenthesis();
+
+                        int parameterCount = 0;
+
+                        if (LookAhead().Type != TokenType.RightParen)
+                        {
+                            while (true)
+                            {
+                                Variable parameter = Expression();
+                                executable.InstructionsInternal.Add(new Instruction(OpCode.PUSH, Operand.Variable(parameter.name)));
+                                ++parameterCount;
+
+                                if (LookAhead().Type == TokenType.RightParen)
+                                    break;
+
+                                ReadComma();
+                            }
+                        }
+
+                        ReadRightParenthesis();
+
+                        // invoke member
+                        executable.InstructionsInternal.Add(
+                            new Instruction(OpCode.MIV,
+                                Operand.MemberVariable(identifier, member),
+                                Operand.Literal(parameterCount)));
+
+                        tmp = AllocateTemporaryVariable();
+                        executable.InstructionsInternal.Add(new Instruction(OpCode.POP, Operand.Variable(tmp)));
+
+                        identifier = tmp;
+                        continue;
+
+                    }
+
+                    tmp = AllocateTemporaryVariable();
+
+                    executable.InstructionsInternal.Add(
+                        new Instruction(OpCode.MOV,
+                            Operand.Variable(tmp),
+                            Operand.MemberVariable(identifier, member)));
+
+                    identifier = tmp;
+
+                    continue;
+
+                }
+
+                break;
+
+            }
+
+            return new Variable(identifier, Scope.Local, null);
+
+        }
+
+        /// <summary>
         /// 
         /// </summary>
         /// <returns></returns>
@@ -931,8 +1047,113 @@ namespace ScriptStack.Compiler
 
         }
 
-        // Bitwise assignment operators ("&=", "|=", "^=", "~=") are handled via
-        // AssignmentOpcode(...) and the generic assignment parser.
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <returns></returns>
+        private Variable BinaryAnd()
+        {
+
+            string left = ExpectIdentifier();
+
+            Token token = ReadToken();
+
+            if (token.Type != TokenType.AssignBinaryAnd)
+                throw new ParserException("Binary AND '&=' erwartet.", token);
+
+            Variable right = Factor();
+
+            executable.InstructionsInternal.Add(new Instruction(OpCode.ANDB, Operand.Variable(left), Operand.Variable(right.name)));
+
+            return right;
+
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <returns></returns>
+        private Variable BinaryOr()
+        {
+
+            string left = ExpectIdentifier();
+
+            Token token = ReadToken();
+
+            if (token.Type != TokenType.AssignBinaryOr)
+                throw new ParserException("Binary OR '|=' erwartet.", token);
+
+            Variable right = Factor();
+
+            executable.InstructionsInternal.Add(new Instruction(OpCode.ORB, Operand.Variable(left), Operand.Variable(right.name)));
+
+            return right;
+
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <returns></returns>
+        private Variable BinaryNotAssign()
+        {
+
+            string left = ExpectIdentifier();
+
+            Token token = ReadToken();
+
+            if (token.Type != TokenType.AssignBinaryNot)
+                throw new ParserException("Binary NEG '~=' erwartet.", token);
+
+            Variable right = Factor();
+
+            executable.InstructionsInternal.Add(new Instruction(OpCode.NOTB, Operand.Variable(left), Operand.Variable(right.name)));
+
+            return right;
+
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <returns></returns>
+        private Variable BinaryNot()
+        {
+
+            Token token = ReadToken();
+
+            if (token.Type != TokenType.AssignBinaryNot)
+                throw new ParserException("Binary NOT '~=' erwartet.", token);
+
+            Variable right = Factor();
+
+            executable.InstructionsInternal.Add(new Instruction(OpCode.NOTB, Operand.Variable(right.name)));
+
+            return right;
+
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <returns></returns>
+        private Variable Xor()
+        {
+
+            string left = ExpectIdentifier();
+
+            Token token = ReadToken();
+
+            if (token.Type != TokenType.AssignXor)
+                throw new ParserException("Binary XOR '~=' erwartet.", token);
+
+            Variable right = Factor();
+
+            executable.InstructionsInternal.Add(new Instruction(OpCode.XOR, Operand.Variable(left), Operand.Variable(right.name)));
+
+            return right;
+
+        }
 
         public string ToLiteral(string input)
         {
@@ -1065,15 +1286,13 @@ namespace ScriptStack.Compiler
 
                         case TokenType.LeftBracket:
 
-                            UndoToken();
-
-                            return Pointer();
-
                         case TokenType.Period:
 
+                            // Support mixed access chains like obj.pets[0].name
+                            // by parsing consecutive member (.) and index ([...]) postfixes.
                             UndoToken();
 
-                            return Member();
+                            return AccessChain();
 
                         case TokenType.LeftParen:
 
@@ -1434,117 +1653,6 @@ namespace ScriptStack.Compiler
         }
 
         /// <summary>
-        /// Bitwise AND: "a & b" (lower precedence than arithmetic, higher than comparisons)
-        /// </summary>
-        private Variable BitwiseAnd()
-        {
-
-            List<Instruction> listInstructions = executable.InstructionsInternal;
-
-            Variable first = Arithmetic();
-
-            while (true)
-            {
-
-                Token token = ReadToken();
-
-                if (token.Type == TokenType.BinaryAnd)
-                {
-
-                    Variable second = Arithmetic();
-
-                    listInstructions.Add(new Instruction(OpCode.ANDB, Operand.Variable(first.name), Operand.Variable(second.name)));
-
-                    first.derivatedType = Derivate(token, first.derivatedType, second.derivatedType);
-
-                }
-                else
-                {
-
-                    UndoToken();
-                    return first;
-
-                }
-
-            }
-
-        }
-
-        /// <summary>
-        /// Bitwise XOR: "a ^ b"
-        /// </summary>
-        private Variable BitwiseXor()
-        {
-
-            List<Instruction> listInstructions = executable.InstructionsInternal;
-
-            Variable first = BitwiseAnd();
-
-            while (true)
-            {
-
-                Token token = ReadToken();
-
-                if (token.Type == TokenType.Xor)
-                {
-
-                    Variable second = BitwiseAnd();
-
-                    listInstructions.Add(new Instruction(OpCode.XOR, Operand.Variable(first.name), Operand.Variable(second.name)));
-
-                    first.derivatedType = Derivate(token, first.derivatedType, second.derivatedType);
-
-                }
-                else
-                {
-
-                    UndoToken();
-                    return first;
-
-                }
-
-            }
-
-        }
-
-        /// <summary>
-        /// Bitwise OR: "a | b"
-        /// </summary>
-        private Variable BitwiseOr()
-        {
-
-            List<Instruction> listInstructions = executable.InstructionsInternal;
-
-            Variable first = BitwiseXor();
-
-            while (true)
-            {
-
-                Token token = ReadToken();
-
-                if (token.Type == TokenType.BinaryOr)
-                {
-
-                    Variable second = BitwiseXor();
-
-                    listInstructions.Add(new Instruction(OpCode.ORB, Operand.Variable(first.name), Operand.Variable(second.name)));
-
-                    first.derivatedType = Derivate(token, first.derivatedType, second.derivatedType);
-
-                }
-                else
-                {
-
-                    UndoToken();
-                    return first;
-
-                }
-
-            }
-
-        }
-
-        /// <summary>
         /// 
         /// </summary>
         /// <returns></returns>
@@ -1553,13 +1661,13 @@ namespace ScriptStack.Compiler
 
             List<Instruction> instructions = executable.InstructionsInternal;
 
-            Variable first = BitwiseOr();
+            Variable first = Arithmetic();
 
             Token token = ReadToken();
 
             if (RelationalOperator(token.Type)) {
 
-                Variable second = BitwiseOr();
+                Variable second = Arithmetic();
 
                 instructions.Add(new Instruction(RelationalOpcode(token.Type), Operand.Variable(first.name), Operand.Variable(second.name)));
 
@@ -1608,6 +1716,122 @@ namespace ScriptStack.Compiler
         }
 
         /// <summary>
+        /// Bitwise AND '&'
+        ///
+        /// Precedence (high -> low):
+        ///   ! (logical NOT)
+        ///   &
+        ///   ^
+        ///   |
+        ///   &&
+        ///   ||
+        ///
+        /// This mirrors common C-like precedence and keeps bitwise ops above logical ops.
+        /// </summary>
+        private Variable BitwiseAnd()
+        {
+
+            List<Instruction> instructions = executable.InstructionsInternal;
+
+            Variable first = Not();
+
+            while (true)
+            {
+
+                Token token = ReadToken();
+
+                if (token.Type == TokenType.BinaryAnd)
+                {
+
+                    Variable second = Not();
+
+                    instructions.Add(new Instruction(OpCode.ANDB, Operand.Variable(first.name), Operand.Variable(second.name)));
+
+                    // Bitwise ops currently work on int in the runtime
+                    first.derivatedType = typeof(int);
+
+                    continue;
+
+                }
+
+                UndoToken();
+                return first;
+
+            }
+
+        }
+
+        /// <summary>
+        /// Bitwise XOR '^'
+        /// </summary>
+        private Variable BitwiseXor()
+        {
+
+            List<Instruction> instructions = executable.InstructionsInternal;
+
+            Variable first = BitwiseAnd();
+
+            while (true)
+            {
+
+                Token token = ReadToken();
+
+                if (token.Type == TokenType.Xor)
+                {
+
+                    Variable second = BitwiseAnd();
+
+                    instructions.Add(new Instruction(OpCode.XOR, Operand.Variable(first.name), Operand.Variable(second.name)));
+
+                    first.derivatedType = typeof(int);
+
+                    continue;
+
+                }
+
+                UndoToken();
+                return first;
+
+            }
+
+        }
+
+        /// <summary>
+        /// Bitwise OR '|'
+        /// </summary>
+        private Variable BitwiseOr()
+        {
+
+            List<Instruction> instructions = executable.InstructionsInternal;
+
+            Variable first = BitwiseXor();
+
+            while (true)
+            {
+
+                Token token = ReadToken();
+
+                if (token.Type == TokenType.BinaryOr)
+                {
+
+                    Variable second = BitwiseXor();
+
+                    instructions.Add(new Instruction(OpCode.ORB, Operand.Variable(first.name), Operand.Variable(second.name)));
+
+                    first.derivatedType = typeof(int);
+
+                    continue;
+
+                }
+
+                UndoToken();
+                return first;
+
+            }
+
+        }
+
+        /// <summary>
         /// Conjunction 
         /// 
         /// Check for proposition (a signed atom)
@@ -1618,7 +1842,7 @@ namespace ScriptStack.Compiler
 
             List<Instruction> instructions = executable.InstructionsInternal;
 
-            Variable first = Not();
+            Variable first = BitwiseOr();
             
             while (true)
             {
@@ -1628,28 +1852,20 @@ namespace ScriptStack.Compiler
                 if (token.Type == TokenType.And)
                 {
 
-                    Variable second = Not();
+                    Variable second = BitwiseOr();
 
                     instructions.Add(new Instruction(OpCode.AND, Operand.Variable(first.name), Operand.Variable(second.name)));
 
                     first.derivatedType = Derivate(token, first.derivatedType, second.derivatedType);
 
-                    break;
+                    continue;
 
                 }
 
-                else
-                {
-
-                    UndoToken();
-
-                    return first;
-
-                }
+                UndoToken();
+                return first;
 
             }
-
-            return first;
 
         }
 
@@ -1676,26 +1892,18 @@ namespace ScriptStack.Compiler
 
                     Variable second = And();
 
-                    instructions.Add( new Instruction(OpCode.OR, Operand.Variable(first.name), Operand.Variable(second.name)));
+                    instructions.Add(new Instruction(OpCode.OR, Operand.Variable(first.name), Operand.Variable(second.name)));
 
                     first.derivatedType = Derivate(token, first.derivatedType, second.derivatedType);
 
-                    break;
+                    continue;
 
                 }
 
-                else
-                {
-
-                    UndoToken();
-
-                    return first;
-
-                }
+                UndoToken();
+                return first;
 
             }
-
-            return first;
 
         }
 
@@ -1720,6 +1928,110 @@ namespace ScriptStack.Compiler
             string tmpIdentifier = AllocateTemporaryVariable();
 
             executable.InstructionsInternal.Add(new Instruction(OpCode.MOV, Operand.Variable(tmpIdentifier), Operand.Variable(identifier)));
+
+            return new Variable(tmpIdentifier, Scope.Local, expression.derivatedType);
+
+        }
+
+        private sealed class AccessSegment
+        {
+            public string MemberName;
+            public string IndexVar;
+            public bool IsMember;
+
+            public static AccessSegment Member(string name) => new AccessSegment { IsMember = true, MemberName = name };
+            public static AccessSegment Index(string indexVar) => new AccessSegment { IsMember = false, IndexVar = indexVar };
+        }
+
+        /// <summary>
+        /// Mixed access chain assignment.
+        ///
+        /// Supports combinations of member and index access in arbitrary order on the LHS,
+        /// e.g.
+        /// <code>
+        /// obj.pets[0].name = "Bello";
+        /// pets[0].name += "!";
+        /// obj.ints[0] = 123;
+        /// obj.map["x"].y[1] = 7;
+        /// </code>
+        ///
+        /// The chain is lowered into temporary MOVs for intermediate steps; the last step
+        /// becomes the actual assignment target (Variable/Member/Pointer).
+        /// </summary>
+        private Variable AccessChainAssignment()
+        {
+
+            string identifier = ExpectIdentifier();
+
+            List<Instruction> listInstructions = executable.InstructionsInternal;
+
+            // Parse postfix chain (.) and ([]) until we hit an assignment operator.
+            List<AccessSegment> segments = new List<AccessSegment>();
+
+            while (true)
+            {
+                if (LookAhead().Type == TokenType.Period)
+                {
+                    ReadPeriod();
+                    segments.Add(AccessSegment.Member(ReadIdentifier()));
+                    continue;
+                }
+
+                if (LookAhead().Type == TokenType.LeftBracket)
+                {
+                    ReadLeftBracket();
+                    Variable idx = Expression();
+                    ReadRightBracket();
+                    segments.Add(AccessSegment.Index(idx.name));
+                    continue;
+                }
+
+                break;
+            }
+
+            Token tok = ReadToken();
+
+            if (!AssignmentOperator(tok.Type))
+                throw new ParserException("Ein Zuweisungsoperator wurde erwartet.", tok);
+
+            Variable expression = Expression();
+
+            // Lower intermediate access steps into temporaries.
+            string current = identifier;
+
+            for (int i = 0; i < segments.Count - 1; i++)
+            {
+                string tmp = AllocateTemporaryVariable();
+                var seg = segments[i];
+
+                Operand rhs = seg.IsMember
+                    ? Operand.MemberVariable(current, seg.MemberName)
+                    : Operand.CreatePointer(current, seg.IndexVar);
+
+                listInstructions.Add(new Instruction(OpCode.MOV, Operand.Variable(tmp), rhs));
+                current = tmp;
+            }
+
+            // Final destination operand (last segment) or plain variable.
+            Operand dest;
+
+            if (segments.Count == 0)
+            {
+                dest = Operand.Variable(current);
+            }
+            else
+            {
+                var last = segments[segments.Count - 1];
+                dest = last.IsMember
+                    ? Operand.MemberVariable(current, last.MemberName)
+                    : Operand.CreatePointer(current, last.IndexVar);
+            }
+
+            listInstructions.Add(new Instruction(AssignmentOpcode(tok.Type), dest, Operand.Variable(expression.name)));
+
+            // Return value of assignment expression
+            string tmpIdentifier = AllocateTemporaryVariable();
+            listInstructions.Add(new Instruction(OpCode.MOV, Operand.Variable(tmpIdentifier), dest));
 
             return new Variable(tmpIdentifier, Scope.Local, expression.derivatedType);
 
@@ -1844,39 +2156,72 @@ namespace ScriptStack.Compiler
         /// <returns></returns>
         private Variable Assignment()
         {
+            // Unified assignment parser (supports Variable, Pointer, Member and mixed chains)
+            return AccessChainAssignment();
+        }
 
-            string identifier = ExpectIdentifier();
+        /// <summary>
+        /// Detect whether the upcoming tokens form an assignment expression.
+        ///
+        /// Supports mixed access chains on the LHS ('.' and '[]' in arbitrary order).
+        /// </summary>
+        private bool IsAccessChainAssignment()
+        {
 
-            Token token = LookAhead();
+            Token start = LookAhead();
 
-            switch (token.Type)
+            if (start.Type != TokenType.Identifier)
+                return false;
+
+            int iInstructionCheckpoint = executable.InstructionsInternal.Count;
+
+            // base identifier
+            ReadIdentifier();
+
+            while (true)
             {
+                if (LookAhead().Type == TokenType.LeftBracket)
+                {
+                    ReadLeftBracket();
+                    Expression();
+                    ReadRightBracket();
+                    continue;
+                }
 
-                case TokenType.Assign:
-                case TokenType.AssignPlus:
-                case TokenType.AssignMinus:
-                case TokenType.AssignMultiply:
-                case TokenType.AssignDivide:
-                case TokenType.AssignBinaryAnd:
-                case TokenType.AssignBinaryOr:
-                case TokenType.AssignXor:
-                case TokenType.AssignBinaryNot:
-                case TokenType.AssignModulo:
-                    UndoToken();
-                    return VariableAssignment();
+                if (LookAhead().Type == TokenType.Period)
+                {
+                    ReadPeriod();
 
-                case TokenType.LeftBracket:
-                    UndoToken();
-                    return ArrayAssignment();
+                    Token token = ReadToken();
 
-                case TokenType.Period:
-                    UndoToken();
-                    return MemberAssignment();
+                    if (token.Type != TokenType.Identifier)
+                    {
+                        while (LookAhead() != start)
+                            UndoToken();
 
-                default:
-                    throw new ExecutionException("Es wurde ein Zuweisungoperator erwartet.");
+                        executable.InstructionsInternal.RemoveRange(
+                            iInstructionCheckpoint,
+                            executable.InstructionsInternal.Count - iInstructionCheckpoint);
 
+                        return false;
+                    }
+
+                    continue;
+                }
+
+                break;
             }
+
+            Token tok = ReadToken();
+
+            while (LookAhead() != start)
+                UndoToken();
+
+            executable.InstructionsInternal.RemoveRange(
+                iInstructionCheckpoint,
+                executable.InstructionsInternal.Count - iInstructionCheckpoint);
+
+            return AssignmentOperator(tok.Type);
 
         }
 
@@ -1965,7 +2310,7 @@ namespace ScriptStack.Compiler
         private Variable Expression()
         {
 
-            if (IsPointer() || IsMember())
+            if (IsAccessChainAssignment())
                 return Assignment();
 
             else
@@ -1994,7 +2339,7 @@ namespace ScriptStack.Compiler
 
             Instruction end = new Instruction(OpCode.NOP);
 
-            executable.InstructionsInternal.Add(new Instruction(OpCode.JNZ, Operand.Variable(condition.name), Operand.AllocateInstructionPointer(start)));
+            executable.InstructionsInternal.Add(new Instruction(OpCode.JZ, Operand.Variable(condition.name), Operand.AllocateInstructionPointer(start)));
 
             StatementList();
 
@@ -2040,7 +2385,7 @@ namespace ScriptStack.Compiler
 
             Instruction end = new Instruction(OpCode.NOP);
 
-            executable.InstructionsInternal.Add(new Instruction(OpCode.JNZ, Operand.Variable(condition.name), Operand.AllocateInstructionPointer(end)));
+            executable.InstructionsInternal.Add(new Instruction(OpCode.JZ, Operand.Variable(condition.name), Operand.AllocateInstructionPointer(end)));
 
             LoopControl loopControl = new LoopControl();
 
@@ -2143,7 +2488,7 @@ namespace ScriptStack.Compiler
 
             Instruction end = new Instruction(OpCode.NOP);
 
-            executable.InstructionsInternal.Add(new Instruction(OpCode.JNZ, Operand.Variable(condition.name), Operand.AllocateInstructionPointer(end)));
+            executable.InstructionsInternal.Add(new Instruction(OpCode.JZ, Operand.Variable(condition.name), Operand.AllocateInstructionPointer(end)));
 
             LoopControl loopControl = new LoopControl();
 
@@ -2211,8 +2556,11 @@ namespace ScriptStack.Compiler
 
             Variable array = Expression();
 
-            if (array.derivatedType != null && array.derivatedType != typeof(ArrayList))
-                throw new ParserException("In ForEach Loops wird ein logischer Ausdruck erwartet.", token);
+            if (array.derivatedType != null
+                && array.derivatedType != typeof(ArrayList)
+                && array.derivatedType != typeof(string)
+                && !typeof(System.Collections.IEnumerable).IsAssignableFrom(array.derivatedType))
+                throw new ParserException("In ForEach Loops wird ein iterierbarer Ausdruck erwartet (Array/List/String/IEnumerable).", token);
 
             ReadRightParenthesis();
 
@@ -2227,7 +2575,7 @@ namespace ScriptStack.Compiler
 
             Instruction end = new Instruction(OpCode.NOP);
 
-            executable.InstructionsInternal.Add(new Instruction(OpCode.JZ, Operand.Variable(identifier), Operand.AllocateInstructionPointer(end)));
+            executable.InstructionsInternal.Add(new Instruction(OpCode.JNZ, Operand.Variable(identifier), Operand.AllocateInstructionPointer(end)));
 
             executable.InstructionsInternal.Add(new Instruction(OpCode.MOV, Operand.Variable(val), Operand.CreatePointer(array.name, key)));
 
@@ -2352,7 +2700,7 @@ namespace ScriptStack.Compiler
                 {
                     Instruction switchInstruction = new Instruction(OpCode.NOP);
 
-                    executable.InstructionsInternal.Add(new Instruction(OpCode.JNZ, Operand.Variable(tmpIdentifier), Operand.AllocateInstructionPointer(switchInstruction)));
+                    executable.InstructionsInternal.Add(new Instruction(OpCode.JZ, Operand.Variable(tmpIdentifier), Operand.AllocateInstructionPointer(switchInstruction)));
 
                     Statement();
 

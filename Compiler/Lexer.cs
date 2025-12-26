@@ -414,7 +414,7 @@ namespace ScriptStack.Compiler
                         }
                         else
                         {
-                            // bitwise XOR: "^"
+                            // bitwise XOR '^'
                             tokenStream.Add(new Token(TokenType.Xor, "^", line, column, currentLine));
                             UndoChar();
                             state = State.None;
@@ -448,7 +448,7 @@ namespace ScriptStack.Compiler
                         }
                         else
                         {
-                            // bitwise AND: "&"
+                            // bitwise AND '&'
                             tokenStream.Add(new Token(TokenType.BinaryAnd, "&", line, column, currentLine));
                             UndoChar();
                             state = State.None;
@@ -468,7 +468,7 @@ namespace ScriptStack.Compiler
                         }
                         else
                         {
-                            // bitwise OR: "|"
+                            // bitwise OR '|'
                             tokenStream.Add(new Token(TokenType.BinaryOr, "|", line, column, currentLine));
                             UndoChar();
                             state = State.None;
