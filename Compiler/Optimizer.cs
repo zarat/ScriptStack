@@ -490,22 +490,30 @@ namespace ScriptStack.Compiler
         private void OptimiseConstantConditionalJumps(int iIndex)
         {
 
-            List<Instruction> listInstructions
-                = executable.InstructionsInternal;
+            List<Instruction> listInstructions = executable.InstructionsInternal;
 
-            Instruction scriptInstruction
-                = listInstructions[iIndex];
-            if (scriptInstruction.OpCode != OpCode.JZ
-                && scriptInstruction.OpCode != OpCode.JNZ) return;
-            if (scriptInstruction.First.Type != OperandType.Literal) return;
-            if (scriptInstruction.First.Value.GetType() != typeof(bool)) return;
+            Instruction scriptInstruction = listInstructions[iIndex];
+
+            if (scriptInstruction.OpCode != OpCode.JZ && scriptInstruction.OpCode != OpCode.JNZ) 
+                return;
+
+            if (scriptInstruction.First.Type != OperandType.Literal) 
+                return;
+
+            if (scriptInstruction.First.Value.GetType() != typeof(bool)) 
+                return;
+
             bool bCondition = (bool) scriptInstruction.First.Value;
 
             InsertOptimiserInfo(iIndex, "Constant Conditional Jump");
 
             OpCode opcodeJump = scriptInstruction.OpCode;
-            if ((opcodeJump == OpCode.JZ && bCondition)
-                || (opcodeJump == OpCode.JNZ && !bCondition))
+
+            // IMPORTANT:
+            //   JZ  = "jump if condition is FALSE"  (i.e. skip block when condition is false)
+            //   JNZ = "jump if condition is TRUE"
+            // So with a constant boolean we can eliminate/replace the jump accordingly.
+            if ((opcodeJump == OpCode.JZ && !bCondition) || (opcodeJump == OpCode.JNZ && bCondition))
             {
                 scriptInstruction.OpCode = OpCode.JMP;
                 scriptInstruction.First = scriptInstruction.Second;
