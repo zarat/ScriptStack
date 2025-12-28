@@ -4,10 +4,6 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
-// CLR Bridge
-using System.Globalization;
-using System.Linq;
-using System.Reflection;
 using System.Text;
 
 namespace ScriptStack.Runtime
@@ -50,6 +46,9 @@ namespace ScriptStack.Runtime
         private bool interrupt;
         private bool interrupted;
         private bool finished;
+        private ClrBridge _clr;
+        private InterpreterOptions _options;
+        
 
         #endregion
 
@@ -170,7 +169,7 @@ namespace ScriptStack.Runtime
                     {
                         src = localMemory[(string)operand.Value];
                         var memberName = operand.Member?.ToString() ?? "";
-                        return GetClrMemberValue(src, memberName);
+                        return _clr.GetMember(src, memberName);
                     }
 
                 //else throw new ExecutionException("Der Typ '"+ operand.Type + "' kann an dieser Stelle nicht verarbeitet werden.");
@@ -211,21 +210,11 @@ namespace ScriptStack.Runtime
 
                     }
 
-                    else if (src is System.Collections.IList list)
-                    {
-                        object objectIndex = localMemory[operand.Pointer];
-
-                        if (objectIndex.GetType() != typeof(int))
-                            throw new ExecutionException("Ein CLR Array ist nur numerisch indexierbar.");
-
-                        return list[(int)objectIndex] ?? NullReference.Instance;
-                    }
-
                     else
                     {
                         // IDictionary / Indexer-Property
                         object objectIndex = localMemory[operand.Pointer];
-                        if (TryGetClrIndexedValue(src, objectIndex, out var v))
+                        if (_clr.TryGetIndex(src, objectIndex, out var v))
                             return v;
                         throw new ExecutionException("Nur Arrays, Dictionaries und Strings sind indexierbar.");
                     }
@@ -266,7 +255,7 @@ namespace ScriptStack.Runtime
                         }
 
                         // NEU: C# Objekt Member setzen
-                        SetClrMemberValue(target, dst.Member.ToString()!, val);
+                        _clr.SetMember(target, dst.Member.ToString()!, val);
                         break;
                     }
                 case OperandType.Pointer:
@@ -286,7 +275,7 @@ namespace ScriptStack.Runtime
                             throw new ExecutionException("Ein String ist nicht schreibbar.");
 
                         // CLR arrays / lists / dictionaries / indexers
-                        if (TrySetClrIndexedValue(container, key, val))
+                        if (_clr.TrySetIndex(container, key, val))
                             break;
 
                         throw new ExecutionException($"Das Ziel '{dst}' vom Typ '{container?.GetType().FullName}' ist nicht indexierbar.");
@@ -611,7 +600,7 @@ namespace ScriptStack.Runtime
             // BUT keep the old numeric cross-type behaviour (int == float etc.)
             if ((instruction.OpCode == OpCode.CEQ || instruction.OpCode == OpCode.CNE) && !(numericDest && numericSource))
             {
-                bool eq = Equals(ScriptNullToClr(dst), ScriptNullToClr(src));
+                bool eq = Equals(ClrBridge.ScriptNullToClr(dst), ClrBridge.ScriptNullToClr(src));
                 result = (instruction.OpCode == OpCode.CEQ) ? eq : !eq;
                 Assignment(instruction.First, result);
                 return;
@@ -626,7 +615,7 @@ namespace ScriptStack.Runtime
                 int cmp;
                 try
                 {
-                    cmp = cmpDst.CompareTo(ScriptNullToClr(src));
+                    cmp = cmpDst.CompareTo(ClrBridge.ScriptNullToClr(src));
                 }
                 catch
                 {
@@ -1636,7 +1625,7 @@ namespace ScriptStack.Runtime
             for (int i = 0; i < argc; i++)
                 args.Insert(0, parameterStack.Pop());
 
-            object result = InvokeClrMethod(target, methodName, args);
+            object result = _clr.Invoke(target, methodName, args);
             if (result == null)
                 result = NullReference.Instance;
 
@@ -1733,7 +1722,7 @@ namespace ScriptStack.Runtime
             for (int i = 0; i < function.ParameterCount; i++)
                 parameters.Insert(0, parameterStack.Pop());
 
-            Interpreter job = new Interpreter(function, parameters);
+            Interpreter job = new Interpreter(function, parameters, _options);
 
             job.Handler = host;
 
@@ -1882,11 +1871,14 @@ namespace ScriptStack.Runtime
 
         #region Public Methods
 
-        public Interpreter(Function function, List<object> parameters)
+        public Interpreter(Function function, List<object> parameters, InterpreterOptions? options = null)
         {
 
             if (function.ParameterCount != parameters.Count)
                 throw new ExecutionException("Die Funktion '" + function.Name + "' wurde mit " + parameters.Count + " statt erwartet " + function.ParameterCount + " Parametern aufgerufen.");
+
+            _options = options ?? new InterpreterOptions();
+            _clr = new ClrBridge(_options.ResolveClrPolicy());
 
             this.function = function;
 
@@ -1945,13 +1937,13 @@ namespace ScriptStack.Runtime
         {
         }
 
-        public Interpreter(Script script, List<object> parameters) : 
-            this(script.Executable.MainFunction, parameters)
+        public Interpreter(Script script, List<object> parameters, InterpreterOptions? options = null) : 
+            this(script.Executable.MainFunction, parameters, options)
         {
         }
 
-        public Interpreter(Script script) : 
-            this(script.Executable.MainFunction, new List<object>())
+        public Interpreter(Script script, InterpreterOptions? options = null) : 
+            this(script.Executable.MainFunction, new List<object>(), options)
         {
         }
 
@@ -2138,532 +2130,6 @@ namespace ScriptStack.Runtime
 
         #endregion
 
-        #region CLR Bridge
-
-        private static readonly BindingFlags ClrMemberFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase;
-
-        private static object ScriptNullToClr(object v) => v is NullReference ? null : v;
-
-        private static object CoerceTo(object value, Type targetType)
-        {
-            value = ScriptNullToClr(value);
-
-            // Handle Nullable<T>
-            var underlyingNullable = Nullable.GetUnderlyingType(targetType);
-            if (underlyingNullable != null)
-                targetType = underlyingNullable;
-
-            if (value == null)
-            {
-                // null für ValueTypes nicht erlaubt -> Default
-                return targetType.IsValueType ? Activator.CreateInstance(targetType)! : null!;
-            }
-
-            var srcType = value.GetType();
-            if (targetType.IsAssignableFrom(srcType))
-                return value;
-
-            // --- ScriptStack ArrayList -> CLR types ---
-            if (value is ArrayList scriptArr)
-            {
-                // CLR Array (e.g. int[])
-                if (targetType.IsArray)
-                {
-                    var elemType = targetType.GetElementType()!;
-                    return ConvertScriptArrayListToClrArray(scriptArr, elemType);
-                }
-
-                // Generic collections (List<T>, ICollection<T>, IEnumerable<T>, etc.)
-                if (TryConvertScriptArrayListToGenericCollection(scriptArr, targetType, out var coll))
-                    return coll;
-
-                // Generic dictionaries (Dictionary<TKey,TValue>, IDictionary<TKey,TValue>)
-                if (TryConvertScriptArrayListToGenericDictionary(scriptArr, targetType, out var dict))
-                    return dict;
-            }
-
-            // Enum conversions
-            if (targetType.IsEnum)
-                return Enum.Parse(targetType, value.ToString()!, ignoreCase: true);
-
-            // numeric / string conversions etc.
-            if (value is IConvertible)
-                return Convert.ChangeType(value, targetType, CultureInfo.InvariantCulture);
-
-            // last resort: keep as-is (Reflection may still accept via implicit operators)
-            return value;
-        }
-
-        private static object ConvertScriptArrayListToClrArray(ArrayList scriptArr, Type elementType)
-        {
-            // We only support list-like arrays here: integer keys, 0..n-1 (no gaps).
-            // Anything associative should be mapped to dictionaries instead.
-            if (scriptArr.Count == 0)
-                return Array.CreateInstance(elementType, 0);
-
-            // ensure all keys are ints
-            var keys = new List<int>(scriptArr.Count);
-            foreach (var k in scriptArr.Keys)
-            {
-                if (k is int i)
-                    keys.Add(i);
-                else
-                    throw new ExecutionException($"Associatives Array kann nicht zu '{elementType.Name}[]' konvertiert werden (Key-Typ: {k?.GetType().Name ?? "null"}).");
-            }
-
-            keys.Sort();
-            for (int i = 0; i < keys.Count; i++)
-            {
-                if (keys[i] != i)
-                    throw new ExecutionException($"Array kann nicht zu '{elementType.Name}[]' konvertiert werden: Keys müssen 0..n-1 ohne Lücken sein.");
-            }
-
-            var arr = Array.CreateInstance(elementType, keys.Count);
-            for (int i = 0; i < keys.Count; i++)
-            {
-                var v = scriptArr[i]; // uses our indexer: returns NullReference.Instance if missing
-                var coerced = CoerceTo(v, elementType);
-                arr.SetValue(coerced, i);
-            }
-            return arr;
-        }
-
-        private static Type GetGenericInterface(Type type, Type genericDefinition)
-        {
-            if (type.IsInterface && type.IsGenericType && type.GetGenericTypeDefinition() == genericDefinition)
-                return type;
-
-            return type.GetInterfaces()
-                .FirstOrDefault(i => i.IsGenericType && i.GetGenericTypeDefinition() == genericDefinition);
-        }
-
-        private static bool TryConvertScriptArrayListToGenericCollection(ArrayList scriptArr, Type targetType, out object collection)
-        {
-            collection = null;
-
-            var iface = GetGenericInterface(targetType, typeof(ICollection<>))
-                     ?? GetGenericInterface(targetType, typeof(IList<>))
-                     ?? GetGenericInterface(targetType, typeof(IEnumerable<>))
-                     ?? GetGenericInterface(targetType, typeof(IReadOnlyCollection<>))
-                     ?? GetGenericInterface(targetType, typeof(IReadOnlyList<>));
-
-            if (iface == null)
-                return false;
-
-            var elemType = iface.GetGenericArguments()[0];
-
-            // Choose concrete type
-            Type concrete = targetType;
-            if (targetType.IsInterface || targetType.IsAbstract)
-                concrete = typeof(List<>).MakeGenericType(elemType);
-
-            object instance;
-            try
-            {
-                instance = Activator.CreateInstance(concrete)!;
-            }
-            catch
-            {
-                // If the target type is non-instantiable, fallback to List<T>
-                instance = Activator.CreateInstance(typeof(List<>).MakeGenericType(elemType))!;
-                concrete = instance.GetType();
-            }
-
-            // Find Add(T)
-            var add = concrete.GetMethod("Add", new[] { elemType })
-                   ?? concrete.GetMethods().FirstOrDefault(m => m.Name == "Add" && m.GetParameters().Length == 1);
-
-            if (add == null)
-                return false;
-
-            // Add items in key order (int keys). If there are non-int keys, refuse.
-            var intKeys = new List<int>();
-            foreach (var k in scriptArr.Keys)
-            {
-                if (k is int i) intKeys.Add(i);
-                else return false;
-            }
-            intKeys.Sort();
-
-            foreach (var k in intKeys)
-            {
-                var v = scriptArr[k];
-                var coerced = CoerceTo(v, elemType);
-                add.Invoke(instance, new[] { coerced });
-            }
-
-            collection = instance;
-            return true;
-        }
-
-        private static bool TryConvertScriptArrayListToGenericDictionary(ArrayList scriptArr, Type targetType, out object dict)
-        {
-            dict = null;
-
-            var iface = GetGenericInterface(targetType, typeof(IDictionary<,>));
-            if (iface == null)
-                return false;
-
-            var ga = iface.GetGenericArguments();
-            var keyType = ga[0];
-            var valType = ga[1];
-
-            Type concrete = targetType;
-            if (targetType.IsInterface || targetType.IsAbstract)
-                concrete = typeof(Dictionary<,>).MakeGenericType(keyType, valType);
-
-            object instance;
-            try
-            {
-                instance = Activator.CreateInstance(concrete)!;
-            }
-            catch
-            {
-                instance = Activator.CreateInstance(typeof(Dictionary<,>).MakeGenericType(keyType, valType))!;
-                concrete = instance.GetType();
-            }
-
-            var add = concrete.GetMethod("Add", new[] { keyType, valType })
-                   ?? concrete.GetMethods().FirstOrDefault(m => m.Name == "Add" && m.GetParameters().Length == 2);
-
-            if (add == null)
-                return false;
-
-            foreach (var k in scriptArr.Keys)
-            {
-                var v = scriptArr[k];
-                var ck = CoerceTo(k, keyType);
-                var cv = CoerceTo(v, valType);
-                add.Invoke(instance, new[] { ck, cv });
-            }
-
-            dict = instance;
-            return true;
-        }
-
-
-        private static object GetClrMemberValue(object target, string memberName)
-        {
-            if (target == null || target is NullReference)
-                return NullReference.Instance;
-
-            var t = target.GetType();
-
-            // 1) Field
-            var field = t.GetField(memberName, ClrMemberFlags);
-            if (field != null)
-                return field.GetValue(target) ?? NullReference.Instance;
-
-            // 2) Property
-            var prop = t.GetProperty(memberName, ClrMemberFlags);
-            if (prop != null && prop.CanRead)
-                return prop.GetValue(target) ?? NullReference.Instance;
-
-            // 3) Fallback: parameterlose Methode (dein bisheriges Verhalten)
-            var m = t.GetMethod(memberName, ClrMemberFlags, binder: null, Type.EmptyTypes, modifiers: null);
-            if (m != null)
-                return m.Invoke(target, Array.Empty<object>()) ?? NullReference.Instance;
-
-            return NullReference.Instance;
-        }
-
-        private static void SetClrMemberValue(object target, string memberName, object scriptValue)
-        {
-            if (target == null || target is NullReference)
-                throw new ExecutionException($"Null reference bei Zuweisung auf Member '{memberName}'.");
-
-            var t = target.GetType();
-
-            var field = t.GetField(memberName, ClrMemberFlags);
-            if (field != null)
-            {
-                var coerced = CoerceTo(scriptValue, field.FieldType);
-                field.SetValue(target, coerced);
-                return;
-            }
-
-            var prop = t.GetProperty(memberName, ClrMemberFlags);
-            if (prop != null && prop.CanWrite)
-            {
-                var coerced = CoerceTo(scriptValue, prop.PropertyType);
-                prop.SetValue(target, coerced);
-                return;
-            }
-
-            throw new ExecutionException($"Member '{memberName}' nicht gefunden oder nicht schreibbar auf Typ '{t.FullName}'.");
-        }
-
-        private static bool TryCoerceTo(object value, Type targetType, out object coerced)
-        {
-            try
-            {
-                coerced = CoerceTo(value, targetType);
-                return true;
-            }
-            catch
-            {
-                coerced = null;
-                return false;
-            }
-        }
-
-        private static object InvokeClrMethod(object target, string methodName, List<object> args)
-        {
-            if (target == null || target is NullReference)
-                return NullReference.Instance;
-
-            var t = target.GetType();
-            var flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase;
-
-            var methods = t.GetMethods(flags);
-
-            MethodInfo best = null;
-            object[] bestArgs = null;
-            int bestScore = int.MaxValue;
-
-            foreach (var m in methods)
-            {
-                if (!string.Equals(m.Name, methodName, StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                var ps = m.GetParameters();
-                if (ps.Length != args.Count)
-                    continue;
-
-                int score = 0;
-                var coercedArgs = new object[ps.Length];
-                bool ok = true;
-
-                for (int i = 0; i < ps.Length; i++)
-                {
-                    var pType = ps[i].ParameterType;
-                    var a = ScriptNullToClr(args[i]);
-
-                    if (a == null)
-                    {
-                        // null passt auf RefTypes/Nullable
-                        if (pType.IsValueType && Nullable.GetUnderlyingType(pType) == null)
-                        {
-                            ok = false;
-                            break;
-                        }
-
-                        coercedArgs[i] = null;
-                        score += 1;
-                        continue;
-                    }
-
-                    var aType = a.GetType();
-
-                    if (pType.IsAssignableFrom(aType))
-                    {
-                        coercedArgs[i] = a;
-                        score += (pType == aType) ? 0 : 1;
-                        continue;
-                    }
-
-                    if (TryCoerceTo(a, pType, out var c))
-                    {
-                        coercedArgs[i] = c;
-                        score += 2;
-                        continue;
-                    }
-
-                    ok = false;
-                    break;
-                }
-
-                if (!ok)
-                    continue;
-
-                if (score < bestScore)
-                {
-                    bestScore = score;
-                    best = m;
-                    bestArgs = coercedArgs;
-                }
-            }
-
-            if (best == null)
-            {
-                throw new ExecutionException($"Methode '{methodName}' mit {args.Count} Parametern nicht gefunden auf Typ '{t.FullName}'.");
-            }
-
-            try
-            {
-                object result = best.Invoke(target, bestArgs);
-                if (best.ReturnType == typeof(void))
-                    return NullReference.Instance;
-
-                return result ?? NullReference.Instance;
-            }
-            catch (TargetInvocationException tie)
-            {
-                // unwrap inner exception for better diagnostics
-                throw new ExecutionException($"Fehler in CLR-Methode '{t.FullName}.{best.Name}': {tie.InnerException?.Message ?? tie.Message}");
-            }
-            catch (Exception ex)
-            {
-                throw new ExecutionException($"Fehler beim Aufruf von CLR-Methode '{t.FullName}.{best.Name}': {ex.Message}");
-            }
-        }
-
-        private static bool TryGetClrIndexedValue(object target, object scriptKey, out object value)
-        {
-            value = NullReference.Instance;
-            if (target == null || target is NullReference)
-                return true;
-
-            // IList / arrays
-            if (target is IList list)
-            {
-                var idxObj = ScriptNullToClr(scriptKey);
-                if (idxObj is int idx)
-                {
-                    value = list[idx] ?? NullReference.Instance;
-                    return true;
-                }
-                return false;
-            }
-
-            // IDictionary
-            if (target is IDictionary dict)
-            {
-                object key = ScriptNullToClr(scriptKey);
-
-                // Try to coerce key to generic TKey if possible (avoids InvalidCastException)
-                var keyType = target.GetType().GetInterfaces()
-                    .FirstOrDefault(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IDictionary<,>))
-                    ?.GetGenericArguments()[0];
-
-                if (keyType != null && TryCoerceTo(key, keyType, out var ck))
-                    key = ck;
-
-                try
-                {
-                    var v = dict[key];
-                    value = v ?? NullReference.Instance;
-                    return true;
-                }
-                catch
-                {
-                    // fall through to indexer reflection
-                }
-            }
-
-            // indexer property (Item[...])
-            var t = target.GetType();
-            foreach (var p in t.GetProperties(ClrMemberFlags))
-            {
-                var ip = p.GetIndexParameters();
-                if (ip.Length != 1 || !p.CanRead)
-                    continue;
-
-                if (!TryCoerceTo(scriptKey, ip[0].ParameterType, out var ck))
-                    continue;
-
-                try
-                {
-                    var v = p.GetValue(target, new object[] { ck });
-                    value = v ?? NullReference.Instance;
-                    return true;
-                }
-                catch
-                {
-                    // try next
-                }
-            }
-
-            return false;
-        }
-
-        private static bool TrySetClrIndexedValue(object target, object scriptKey, object scriptValue)
-        {
-            if (target == null || target is NullReference)
-                return false;
-
-            // IList / arrays
-            if (target is IList list)
-            {
-                var idxObj = ScriptNullToClr(scriptKey);
-                if (idxObj is not int idx)
-                    return false;
-
-                // try to coerce value to element type if we can infer it
-                Type elemType = null;
-                var tt = target.GetType();
-                if (tt.IsArray)
-                    elemType = tt.GetElementType();
-                else
-                {
-                    var gi = tt.GetInterfaces().FirstOrDefault(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IList<>));
-                    if (gi != null) elemType = gi.GetGenericArguments()[0];
-                }
-
-                object v = scriptValue;
-                if (elemType != null && TryCoerceTo(scriptValue, elemType, out var cv))
-                    v = cv;
-
-                list[idx] = ScriptNullToClr(v);
-                return true;
-            }
-
-            // IDictionary
-            if (target is IDictionary dict)
-            {
-                object key = ScriptNullToClr(scriptKey);
-                object val = ScriptNullToClr(scriptValue);
-
-                var iface = target.GetType().GetInterfaces()
-                    .FirstOrDefault(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IDictionary<,>));
-                if (iface != null)
-                {
-                    var ga = iface.GetGenericArguments();
-                    var keyType = ga[0];
-                    var valType = ga[1];
-                    if (TryCoerceTo(key, keyType, out var ck)) key = ck;
-                    if (TryCoerceTo(val, valType, out var cv)) val = cv;
-                }
-
-                try
-                {
-                    dict[key] = val;
-                    return true;
-                }
-                catch
-                {
-                    // fall through to indexer reflection
-                }
-            }
-
-            // indexer property (Item[...])
-            var t = target.GetType();
-            foreach (var p in t.GetProperties(ClrMemberFlags))
-            {
-                var ip = p.GetIndexParameters();
-                if (ip.Length != 1 || !p.CanWrite)
-                    continue;
-
-                if (!TryCoerceTo(scriptKey, ip[0].ParameterType, out var ck))
-                    continue;
-
-                object v = scriptValue;
-                if (TryCoerceTo(scriptValue, p.PropertyType, out var cv))
-                    v = cv;
-
-                try
-                {
-                    p.SetValue(target, ScriptNullToClr(v), new object[] { ck });
-                    return true;
-                }
-                catch
-                {
-                    // try next
-                }
-            }
-
-            return false;
-        }
 
         private void Iterator(IList list)
         {
@@ -2685,8 +2151,6 @@ namespace ScriptStack.Runtime
             else
                 localMemory[instruction.First.Value.ToString()] = NullReference.Instance;
         }
-
-        #endregion
 
     }
 

@@ -100,7 +100,14 @@ namespace ScriptStack
                 {
                     assembly = Assembly.LoadFile(dll);
                 }
-                catch (Exception e) { Console.WriteLine($"[LoadComponents] Fehler beim Laden '{dll}': {e.Message}"); continue; }
+                catch (Exception e) { 
+                    Console.WriteLine($"[LoadComponents] Fehler beim Laden '{dll}': {e.Message}");
+
+                    if (e is TargetInvocationException tie && tie.InnerException != null)
+                        Console.WriteLine("INNER: " + tie.InnerException);
+
+                    continue; 
+                }
 
                 Type[] arrayTypes = assembly.GetExportedTypes();
 
