@@ -10,7 +10,7 @@ namespace ScriptStack.Plugins
         private readonly string[] _sharedAssemblies;
 
         public PluginLoadContext(string pluginMainAssemblyPath, string[]? sharedAssemblyNames = null)
-            : base(isCollectible: false)
+            : base(isCollectible: true)
         {
             _resolver = new AssemblyDependencyResolver(pluginMainAssemblyPath);
             _sharedAssemblies = sharedAssemblyNames ?? Array.Empty<string>();
@@ -41,3 +41,4 @@ namespace ScriptStack.Plugins
         }
     }
 }
+
