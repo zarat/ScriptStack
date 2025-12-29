@@ -278,11 +278,12 @@ namespace ScriptStack
                 }
             }
 
+            loadedPlugins.Clear();
+            
             GC.Collect();
             GC.WaitForPendingFinalizers();
             GC.Collect();
 
-            loadedPlugins.Clear();
         }
 
         #endregion
@@ -332,3 +333,4 @@ namespace ScriptStack
     }
 
 }
+
