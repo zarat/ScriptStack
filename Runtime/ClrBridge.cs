@@ -19,6 +19,8 @@ namespace ScriptStack.Runtime
         private readonly IClrPolicy _policy;
 
         private static readonly BindingFlags ClrMemberFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase;
+        private static readonly BindingFlags ClrInstanceMemberFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase;
+        private static readonly BindingFlags ClrStaticMemberFlags = BindingFlags.Static | BindingFlags.Public | BindingFlags.IgnoreCase | BindingFlags.FlattenHierarchy;
 
         public ClrBridge(IClrPolicy policy)
         {
@@ -271,31 +273,32 @@ namespace ScriptStack.Runtime
             if (target == null || target is NullReference)
                 return NullReference.Instance;
 
-            var t = target.GetType();
+            bool isStatic = target is Type;
+            var t = isStatic ? (Type)target : target.GetType();
             EnsureTypeAllowed(t);
 
-            // 1) Field
-            var field = t.GetField(memberName, ClrMemberFlags);
+            var flags = isStatic ? ClrStaticMemberFlags : ClrInstanceMemberFlags;
+
+            var field = t.GetField(memberName, flags);
             if (field != null)
             {
                 if (!_policy.IsMemberAllowed(field))
                     throw new ExecutionException($"CLR member access denied: '{t.FullName}.{field.Name}'.");
 
-                var v = field.GetValue(target);
+                var v = field.GetValue(isStatic ? null : target);
                 EnsureReturnAllowed(v, $"field '{t.FullName}.{field.Name}'");
-                return ClrNullToScript(v);
+                return v ?? NullReference.Instance;
             }
 
-            // 2) Property
-            var prop = t.GetProperty(memberName, ClrMemberFlags);
+            var prop = t.GetProperty(memberName, flags);
             if (prop != null && prop.CanRead)
             {
                 if (!_policy.IsMemberAllowed(prop))
                     throw new ExecutionException($"CLR member access denied: '{t.FullName}.{prop.Name}'.");
 
-                var v = prop.GetValue(target);
+                var v = prop.GetValue(isStatic ? null : target);
                 EnsureReturnAllowed(v, $"property '{t.FullName}.{prop.Name}'");
-                return ClrNullToScript(v);
+                return v ?? NullReference.Instance;
             }
 
             return NullReference.Instance;
@@ -343,10 +346,12 @@ namespace ScriptStack.Runtime
             if (target == null || target is NullReference)
                 return NullReference.Instance;
 
-            var t = target.GetType();
+            bool isStatic = target is Type;
+            var t = isStatic ? (Type)target : target.GetType();
             EnsureTypeAllowed(t);
 
-            var methods = t.GetMethods(ClrMemberFlags);
+            var flags = isStatic ? ClrStaticMemberFlags : ClrInstanceMemberFlags;
+            var methods = t.GetMethods(flags);
 
             MethodInfo? best = null;
             object[]? bestArgs = null;
@@ -435,7 +440,8 @@ namespace ScriptStack.Runtime
 
             try
             {
-                object? result = best.Invoke(target, bestArgs);
+                
+                object? result = best.Invoke(isStatic ? null : target, bestArgs);
                 if (best.ReturnType == typeof(void))
                     return NullReference.Instance;
 
