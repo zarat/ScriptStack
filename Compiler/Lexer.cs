@@ -50,7 +50,12 @@ namespace ScriptStack.Compiler
             Bin,
             Oct,
             Char,
-            BinaryNot
+            BinaryNot,
+            // Multiline strings
+            MultiLineString,
+            MultiLineStringQuote1,
+            MultiLineStringQuote2,
+            EscapeMultiLineString
         }
 
         #endregion
@@ -74,6 +79,11 @@ namespace ScriptStack.Compiler
         private int line;
         private int column;
         private State state;
+
+        // Multiline strings
+        private int stringStartLine;
+        private int stringStartColumn;
+        private string stringStartLineText;
 
         #endregion
 
@@ -146,6 +156,18 @@ namespace ScriptStack.Compiler
 
             state = State.None;
 
+        }
+
+        private bool TryReadChar(out char ch)
+        {
+            if (EndOfSource)
+            {
+                ch = '\0';
+                return false;
+            }
+
+            ch = ReadChar();
+            return true;
         }
 
         /// <summary>
@@ -254,9 +276,56 @@ namespace ScriptStack.Compiler
                                 state = State.Less;
                                 break;
                             case '\"':
-                                lexeme = "";
-                                state = State.String;
-                                break;
+                                {
+                                    // Startposition sauber merken (wir sind gerade 1 Zeichen drüber)
+                                    UndoChar();
+                                    stringStartLine = line;
+                                    stringStartColumn = column;
+                                    stringStartLineText = lines[line];
+                                    ReadChar(); // das " nochmal konsumieren
+
+                                    lexeme = "";
+
+                                    // Lookahead: """ ?
+                                    if (!TryReadChar(out char n1))
+                                    {
+                                        // " am Ende der Datei => unterminiert
+                                        state = State.String;
+                                        break;
+                                    }
+
+                                    if (n1 == '\"')
+                                    {
+                                        if (!TryReadChar(out char n2))
+                                        {
+                                            // "" am Ende => leerer String
+                                            tokenStream.Add(new Token(TokenType.String, "", stringStartLine, stringStartColumn, stringStartLineText));
+                                            state = State.None;
+                                            break;
+                                        }
+
+                                        if (n2 == '\"')
+                                        {
+                                            // """ => MultiLineString Start
+                                            state = State.MultiLineString;
+                                        }
+                                        else
+                                        {
+                                            // "" => leerer String, n2 gehört schon zum nächsten Token
+                                            UndoChar(); // n2 zurück
+                                            tokenStream.Add(new Token(TokenType.String, "", stringStartLine, stringStartColumn, stringStartLineText));
+                                            state = State.None;
+                                        }
+                                    }
+                                    else
+                                    {
+                                        // normaler "..." String, n1 ist erstes Zeichen im String
+                                        UndoChar(); // n1 zurück
+                                        state = State.String;
+                                    }
+
+                                    break;
+                                }
                             case '\'':
                                 lexeme = "";
                                 state = State.Char;
@@ -698,6 +767,68 @@ namespace ScriptStack.Compiler
                         else
                             throw new LexerException("Das Escapezeichen '\\" + ch + "' kann in Strings nicht verarbeitet werden.", line, column, lines[line]);
                         
+                        break;
+
+                    case State.MultiLineString:
+                        if (ch == '\"')
+                        {
+                            state = State.MultiLineStringQuote1;
+                        }
+                        else if (ch == '\\')
+                        {
+                            state = State.EscapeMultiLineString;
+                        }
+                        else if (ch == '\r')
+                        {
+                            // ignorieren (du hast \r\n in den lines)
+                        }
+                        else
+                        {
+                            // inkl. '\n' erlaubt
+                            lexeme += ch;
+                        }
+                        break;
+
+                    case State.MultiLineStringQuote1:
+                        if (ch == '\"')
+                        {
+                            state = State.MultiLineStringQuote2;
+                        }
+                        else
+                        {
+                            // war kein Abschluss, nur ein "
+                            lexeme += '\"';
+                            if (ch != '\r') lexeme += ch;
+                            state = State.MultiLineString;
+                        }
+                        break;
+
+                    case State.MultiLineStringQuote2:
+                        if (ch == '\"')
+                        {
+                            // """ beendet
+                            tokenStream.Add(new Token(TokenType.String, lexeme, stringStartLine, stringStartColumn, stringStartLineText));
+                            state = State.None;
+                        }
+                        else
+                        {
+                            // war kein Abschluss, nur ""
+                            lexeme += "\"\"";
+                            if (ch != '\r') lexeme += ch;
+                            state = State.MultiLineString;
+                        }
+                        break;
+
+                    case State.EscapeMultiLineString:
+                        // gleiche Escape-Logik wie bei normalen Strings, aber Rückkehr zu MultiLineString
+                        if (ch == '"') { lexeme += '\"'; state = State.MultiLineString; }
+                        else if (ch == '\\') { lexeme += '\\'; state = State.MultiLineString; }
+                        else if (ch == 'n') { lexeme += '\n'; state = State.MultiLineString; }
+                        else if (ch == 't') { lexeme += '\t'; state = State.MultiLineString; }
+                        else if (ch == 'r') { lexeme += '\r'; state = State.MultiLineString; }
+                        else if (ch == 'b') { lexeme += '\b'; state = State.MultiLineString; }
+                        else
+                            throw new LexerException("Das Escapezeichen '\\" + ch + "' kann in Strings nicht verarbeitet werden.", line, column, lines[line]);
                         break;
 
                     case State.Number:
