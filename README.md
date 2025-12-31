@@ -11,3 +11,6 @@ A managed .NET scripting language to integrate into games (Unity3d, Godot) or an
 - wait/notify - pause execution until a specific event is thrown
 - CLR Interop - Use native C# Classes in your script
 - Sandbox mode - only allow pre-defined CLR capabilities
+
+# ToDo
+- Multiline strings
