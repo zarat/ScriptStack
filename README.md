@@ -12,5 +12,3 @@ A managed .NET scripting language to integrate into games (Unity3d, Godot) or an
 - CLR Interop - Use native C# Classes in your script
 - Sandbox mode - only allow pre-defined CLR capabilities
 
-# ToDo
-- Multiline strings
