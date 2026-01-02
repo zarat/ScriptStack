@@ -24,3 +24,8 @@ typeof(Script).GetField("executable", BindingFlags.NonPublic | BindingFlags.Inst
 // 3) Interpreter starten
 var interpreter = new Interpreter(exec.Script);
 ```
+Wenn man TokenStream nicht braucht
+```CSharp
+var script = Standalone.CompileToScript("var a;var b; function main() { a = 1; b = 2; if(b > a) std.print(b); }", manager);
+var interpreter = new Interpreter(script);
+```
