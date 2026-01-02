@@ -525,6 +525,30 @@ namespace ScriptStack.Compiler
         }
 
         /// <summary>
+        /// Read a dotted (qualified) identifier like: <c>std.print</c> or <c>ns.io.print</c>.
+        ///
+        /// This is intentionally ONLY used for function/routine names.
+        /// Member access on variables is parsed by <see cref="AccessChain"/>.
+        /// </summary>
+        private string ReadQualifiedIdentifier()
+        {
+
+            string id = ReadIdentifier();
+
+            while (More() && LookAhead().Type == TokenType.Period)
+            {
+
+                ReadPeriod();
+
+                id += "." + ReadIdentifier();
+
+            }
+
+            return id;
+
+        }
+
+        /// <summary>
         /// Read an expected (previously declared) identifier
         /// </summary>
         /// <returns></returns>
@@ -668,7 +692,7 @@ namespace ScriptStack.Compiler
         private Variable RoutineCall()
         {
 
-            string identifier = ReadIdentifier();
+            string identifier = ReadQualifiedIdentifier();
 
             ReadLeftParenthesis();
 
@@ -1288,11 +1312,42 @@ namespace ScriptStack.Compiler
 
                         case TokenType.Period:
 
-                            // Support mixed access chains like obj.pets[0].name
-                            // by parsing consecutive member (.) and index ([...]) postfixes.
-                            UndoToken();
+                            // Ambiguity: "std.print()" could be either a member-call on an object "std"
+                            // or a qualified routine name.
+                            //
+                            // Rule: If the dotted name is followed by '(' AND the manager has a registered
+                            // routine with that qualified name, treat it as a routine/function call.
+                            // Otherwise parse it as an access chain (supports obj.method(...)).
+                            {
 
-                            return AccessChain();
+                                int i = nextToken;
+                                string qualified = identifier;
+                                bool hasDot = false;
+
+                                while (i < tokenStream.Count && tokenStream[i].Type == TokenType.Period)
+                                {
+
+                                    if (i + 1 >= tokenStream.Count || tokenStream[i + 1].Type != TokenType.Identifier)
+                                        break;
+
+                                    hasDot = true;
+                                    qualified += "." + tokenStream[i + 1].Lexeme.ToString();
+                                    i += 2;
+
+                                }
+
+                                bool looksLikeQualifiedCall = hasDot && i < tokenStream.Count && tokenStream[i].Type == TokenType.LeftParen;
+
+                                if (looksLikeQualifiedCall && executable.Script.Manager.IsRegistered(qualified))
+                                {
+                                    UndoToken();
+                                    return FunctionCall();
+                                }
+
+                                UndoToken();
+                                return AccessChain();
+
+                            }
 
                         case TokenType.LeftParen:
 
@@ -2861,7 +2916,7 @@ namespace ScriptStack.Compiler
         private Variable FunctionCall(bool background)
         {
 
-            string name = ReadIdentifier();
+            string name = ReadQualifiedIdentifier();
 
             // lets expect it is a function
             bool forwardDeclared = true;
@@ -2973,15 +3028,18 @@ namespace ScriptStack.Compiler
         private Variable FunctionCall()
         {
 
-            string functionName = ReadIdentifier();
+            // We must be able to look ahead without losing how many tokens we consumed.
+            // For qualified routine names like "std.print(...)" we consume multiple tokens.
+            int start = nextToken;
 
-            UndoToken();
+            string functionName = ReadQualifiedIdentifier();
+
+            nextToken = start;
 
             if (executable.Script.Manager.IsRegistered(functionName))
                 return RoutineCall();
 
-            else
-                return FunctionCall(false);
+            return FunctionCall(false);
 
         }
 
