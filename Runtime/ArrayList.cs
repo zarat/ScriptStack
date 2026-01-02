@@ -126,6 +126,15 @@ namespace ScriptStack.Runtime
             return sb.ToString();
         }
 
+        public object[] ToArray()
+        {
+            var list = new List<object>();
+            foreach (var el in this.Values)
+                list.Add(el);
+        
+            return list.ToArray();
+        }
+
         private static void WriteJsonValue(StringBuilder sb, object value, HashSet<object> stack)
         {
             if (value == null || value is NullReference)
@@ -312,3 +321,4 @@ namespace ScriptStack.Runtime
     }
 
 }
+
