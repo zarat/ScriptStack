@@ -142,6 +142,36 @@ namespace ScriptStack.Compiler
 
         #region Public Methods
 
+        /// <summary>
+        /// Split a source string into lines that can be fed into the lexer.
+        /// Normalizes line endings (\r\n and \r become \n).
+        /// </summary>
+        public static List<string> ToLines(string source)
+        {
+            if (source == null)
+                throw new ArgumentNullException(nameof(source));
+
+            // Normalize line endings so we can split reliably
+            source = source.Replace("\r\n", "\n").Replace("\r", "\n");
+
+            // Keep trailing empty lines (Split would otherwise drop them)
+            var parts = source.Split('\n');
+            return new List<string>(parts);
+        }
+
+        /// <summary>
+        /// Convenience helper: tokenize a full source string.
+        /// </summary>
+        public static List<Token> Tokenize(string source, DefaultRealType defaultReal = DefaultRealType.Decimal)
+        {
+            var lexer = new Lexer(ToLines(source))
+            {
+                DefaultReal = defaultReal
+            };
+
+            return lexer.GetTokens();
+        }
+
         public Lexer(List<string> lines)
         {
 

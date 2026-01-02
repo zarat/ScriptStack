@@ -35,6 +35,22 @@ namespace ScriptStack.Runtime
             sourceCode = scanner.Scan(scriptName);
             sourceCode.Add(" ");
 
+            ProcessIncludes();
+
+        }
+
+        /// <summary>
+        /// Resolve include statements in the current <see cref="sourceCode"/> by expanding the referenced files.
+        /// The include expansion uses the current <see cref="Manager.Scanner"/>.
+        /// </summary>
+        private void ProcessIncludes()
+        {
+
+            if (sourceCode == null || sourceCode.Count == 0)
+                return;
+
+            Scanner scanner = manager.Scanner;
+
             Dictionary<string, bool> included = new Dictionary<string, bool>();
 
             for (int i = 0; i < sourceCode.Count; i++)
@@ -42,7 +58,8 @@ namespace ScriptStack.Runtime
 
                 string line = sourceCode[i];
 
-                Lexer lexer = new Lexer(new List<string> { line });
+                // Use the manager's lexer factory so custom lexer settings also apply here.
+                Lexer lexer = manager.LexerFactory(new List<string> { line });
 
                 List<Token> tokenStream = null;
 
@@ -83,10 +100,10 @@ namespace ScriptStack.Runtime
                 if (included.ContainsKey(include))
                     continue;
 
-                /* and place the source where the original include statement was.. */
+                // Place the included source where the original include statement was.
                 sourceCode.InsertRange(i, scanner.Scan(include));
 
-                /* set the current script as already included */
+                // Mark as included.
                 included[include] = true;
 
                 --i;
@@ -214,6 +231,74 @@ namespace ScriptStack.Runtime
                     // Für alles andere reicht der String
                     return lexemeStr;
             }
+        }
+
+        /// <summary>
+        /// Create a script context from in-memory source lines without compiling it.
+        /// This is useful if you want to run the <see cref="Lexer"/> and <see cref="Parser"/> manually.
+        /// </summary>
+        public static Script CreateContext(Manager manager, string scriptName, IEnumerable<string> sourceLines, bool resolveIncludes = false)
+        {
+            return new Script(manager, scriptName, sourceLines, resolveIncludes, compile: false);
+        }
+
+        /// <summary>
+        /// Create (and optionally compile) a script from in-memory source lines.
+        /// This allows using the compiler frontend without relying on files or the default scanner.
+        /// </summary>
+        /// <param name="manager">The manager providing shared memory, routines and compiler settings.</param>
+        /// <param name="scriptName">A logical name used for error messages.</param>
+        /// <param name="sourceLines">Source lines (one element per line).</param>
+        /// <param name="resolveIncludes">If true, expand include statements using <see cref="Manager.Scanner"/>.</param>
+        /// <param name="compile">If false, only the context is created (no lexing/parsing).</param>
+        public Script(Manager manager, string scriptName, IEnumerable<string> sourceLines, bool resolveIncludes = false, bool compile = true)
+        {
+
+            this.manager = manager;
+            this.scriptName = scriptName;
+
+            try
+            {
+
+                sourceCode = new List<string>(sourceLines ?? Array.Empty<string>());
+                sourceCode.Add(" ");
+
+                if (resolveIncludes)
+                    ProcessIncludes();
+
+                if (!compile)
+                {
+                    executable = null;
+                    return;
+                }
+
+                Lexer lexer = manager.LexerFactory(sourceCode);
+
+                List<Token> tokenStream = lexer.GetTokens();
+
+                Parser parser = new Parser(this, tokenStream);
+
+                parser.DebugMode = this.manager.Debug;
+
+                executable = parser.Parse();
+
+                if (this.manager.Optimize)
+                {
+
+                    Optimizer optimizer = new Optimizer(executable);
+
+                    optimizer.OptimizerInfo = false;
+
+                    optimizer.Optimize();
+
+                }
+
+            }
+            catch (Exception exception)
+            {
+                throw new ScriptStackException("Fehler in '" + scriptName + "'.", exception);
+            }
+
         }
 
         public Script(Manager manager, string scriptName)
