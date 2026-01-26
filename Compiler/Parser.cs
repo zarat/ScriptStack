@@ -3161,7 +3161,7 @@ namespace ScriptStack.Compiler
 
             Instruction arrived = new Instruction(OpCode.NOP);
 
-            Instruction waiting = new Instruction(OpCode.JZ, Operand.Variable(identifier), Operand.AllocateInstructionPointer(arrived));
+            Instruction waiting = new Instruction(OpCode.JNZ, Operand.Variable(identifier), Operand.AllocateInstructionPointer(arrived));
 
             instructions.Add(waiting);
 
